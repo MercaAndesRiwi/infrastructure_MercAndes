@@ -54,7 +54,23 @@ services:
     volumes: [kafka-data:/var/lib/kafka/data]
     restart: unless-stopped
 
+    spark-master:
+    image: apache/spark:3.5.1
+    container_name: platform-spark-master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    ports: ["${SPARK_MASTER_UI_PORT:-8081}:8080", "7077:7077"]
+    volumes: [spark-work:/opt/spark/work]
+    restart: unless-stopped
+
+  spark-worker:
+    image: apache/spark:3.5
+    container_name: platform-spark-worker
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.worker.Worker -m ${SPARK_WORKER_MEMORY:-1G} -c ${SPARK_WORKER_CORES:-1} spark://spark-master:7077
+    depends_on: [spark-master]
+    restart: unless-stopped
+
 volumes:
   pgdata:
   rabbit-data:
   kafka-data:
+  spark-work:
