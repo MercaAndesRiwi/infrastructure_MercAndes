@@ -1,0 +1,13 @@
+#!/bin/bash
+set -e
+psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<EOSQL
+DO \$\$
+BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '${AIRFLOW_DB_USER:-airflow}') THEN
+    CREATE USER "${AIRFLOW_DB_USER:-airflow}" WITH PASSWORD '${AIRFLOW_DB_PASSWORD:-airflow}';
+  END IF;
+END
+\$\$;
+SELECT 'CREATE DATABASE "${AIRFLOW_DB_NAME:-airflow}" OWNER "${AIRFLOW_DB_USER:-airflow}"'
+WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = '${AIRFLOW_DB_NAME:-airflow}')\gexec
+EOSQL
