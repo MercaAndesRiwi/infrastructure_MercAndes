@@ -10,6 +10,7 @@ services:
     ports: ["${POS_DB_PORT:-5432}:5432"]
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POS_DB_USER} -d $${POS_DB_NAME}"]
       interval: 10s
@@ -54,6 +55,15 @@ services:
     volumes: [kafka-data:/var/lib/kafka/data]
     restart: unless-stopped
 
+  kafka-ui:
+    image: obsidiandynamics/kafdrop:4.0.2
+    container_name: platform-kafka-ui
+    ports: ["${KAFKA_UI_PORT:-9000}:9000"]
+    environment:
+      KAFKA_BROKERCONNECT: kafka:29092
+    depends_on: [kafka]
+    restart: unless-stopped
+
   spark-master:
     image: apache/spark:3.5.1
     container_name: platform-spark-master
@@ -74,6 +84,7 @@ services:
     env_file: [.env]
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
@@ -94,6 +105,7 @@ services:
     env_file: [.env]
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
@@ -113,6 +125,7 @@ services:
     env_file: [.env]
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
@@ -123,6 +136,39 @@ services:
     command: scheduler
     depends_on:
       airflow-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+
+  pos-api:
+    build: ./services/pos-api
+    container_name: platform-pos-api
+    env_file: [.env]
+    environment:
+      PYTHONPATH: /opt/domain
+      POS_DB_HOST: postgres
+    ports: ["${POS_API_PORT:-8001}:8000"]
+    volumes: [../data-processing:/opt/domain:ro]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+
+  inventory-api:
+    build: ./services/inventory-api
+    container_name: platform-inventory-api
+    env_file: [.env]
+    environment:
+      PYTHONPATH: /opt/domain
+    ports: ["${INVENTORY_API_PORT:-8002}:8000"]
+    volumes: [../data-processing:/opt/domain:ro]
+    restart: unless-stopped
+
+  marketplace-api:
+    build: ./services/marketplace-api
+    container_name: platform-marketplace-api
+    env_file: [.env]
+    environment:
+      PYTHONPATH: /opt/domain
+    ports: ["${MARKETPLACE_API_PORT:-8003}:8000"]
+    volumes: [../data-processing:/opt/domain:ro]
     restart: unless-stopped
 
 volumes:

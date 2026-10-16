@@ -4,4 +4,4 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 .vscode/
-.idea/
+.idea
