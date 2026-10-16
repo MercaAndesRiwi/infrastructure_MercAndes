@@ -4,7 +4,7 @@ Postgres + RabbitMQ + Kafka + Spark + Airflow + 3 APIs with a single command.
 Domain logic lives in the sibling `data-processing` repo (mounted read-only
 at `/opt/domain`); this repo owns images, wiring, CI and onboarding evidence.
 
-## Quickstart (< 30 min, single command)
+## Quickstart ( single command to execute)
 
 ```powershell
 Copy-Item .env.example .env
