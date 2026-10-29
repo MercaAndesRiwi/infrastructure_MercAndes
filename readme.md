@@ -29,12 +29,32 @@ Edite el archivo `.env` según corresponda:
   - *Envío Real con Gmail:* `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USER=tu_correo@gmail.com`, `SMTP_PASSWORD=tu_app_password`.
   - *Producción AWS SES:* `SMTP_HOST=email-smtp.us-east-1.amazonaws.com`, `SMTP_PORT=587`.
 
-### Paso 2.2: Generar Lock de Dependencias (si se modifica F7)
+### Paso 2.2: Inicialización y Gestión de Dependencias con `uv` (Por Microservicio)
+
+Cada microservicio en `services/` gestiona su entorno y dependencias de forma aislada mediante `uv`. Si se inicializan desde cero o se actualizan sus paquetes:
 
 ```powershell
-cd services/f7-weekly-promotions
+# 1. inventory-api (F3 - Consulta de Inventario)
+cd services/inventory-api
+uv init --name inventory-api --bare
+uv add fastapi uvicorn
+
+# 2. marketplace-api (F4 - Eventos de Pedidos Marketplace)
+cd ..\marketplace-api
+uv init --name marketplace-api --bare
+uv add fastapi uvicorn python-dotenv
+
+# 3. pos-api (F2 - Transacciones POS y Base de Datos)
+cd ..\pos-api
+uv init --name pos-api --bare
+uv add fastapi uvicorn sqlalchemy "psycopg[binary]" python-dotenv
+
+# 4. f7-weekly-promotions (F7 - Ingesta de Promociones)
+cd ..\f7-weekly-promotions
 uv lock
-cd ../..
+
+# Regresar a la raíz de data-platform
+cd ..\..
 ```
 
 ### Paso 2.3: Construir e Iniciar Contenedores
