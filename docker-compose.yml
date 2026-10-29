@@ -115,15 +115,16 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER:-guest_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
       _AIRFLOW_DB_MIGRATE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
-      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD:-airflow}
+      _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -139,9 +140,9 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER:-guest_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
       AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
@@ -151,12 +152,13 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
-      RABBITMQ_USER: "${RABBITMQ_USER:-guest_user}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
-      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD:-change_me_to_a_secure_password}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
+      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -175,9 +177,9 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER:-guest_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
       AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
@@ -188,12 +190,13 @@ services:
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
-      RABBITMQ_USER: "${RABBITMQ_USER:-guest_user}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
-      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD:-change_me_to_a_secure_password}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
+      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -211,21 +214,22 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER:-guest_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       S3_DATA_LAKE_BUCKET_NAME: ${S3_DATA_LAKE_BUCKET_NAME}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
-      RABBITMQ_USER: "${RABBITMQ_USER:-guest_user}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
-      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD:-change_me_to_a_secure_password}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
+      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -245,21 +249,22 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER:-guest_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       S3_DATA_LAKE_BUCKET_NAME: ${S3_DATA_LAKE_BUCKET_NAME}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
-      RABBITMQ_USER: "${RABBITMQ_USER:-guest_user}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
-      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD:-change_me_to_a_secure_password}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
+      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
@@ -279,9 +284,9 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER:-guest_user}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
-      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD:-airflow}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
     ports: ["${AIRFLOW_FLOWER_PORT:-5555}:5555"]
     command: celery flower
     depends_on:
@@ -338,7 +343,7 @@ services:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: ${RABBITMQ_PORT}
       RABBITMQ_VHOST: ${RABBITMQ_VHOST}
-      RABBITMQ_USERNAME: ${RABBITMQ_USERNAME}
+      RABBITMQ_USER: ${RABBITMQ_USER}
       RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
       RABBITMQ_QUEUE_PROMOTIONS_WEEKLY_INGEST: ${RABBITMQ_QUEUE_PROMOTIONS_WEEKLY_INGEST}
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
@@ -358,7 +363,7 @@ services:
     environment:
       RABBITMQ_HOST: rabbitmq
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
-      RABBITMQ_USER: "${RABBITMQ_USER:-guest_user}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
       RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS: "${RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS:-mercaandes.notifications.purchase}"

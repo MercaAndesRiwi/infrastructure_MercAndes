@@ -44,7 +44,7 @@ default_args = {
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
 RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", os.getenv("RABBITMQ_USERNAME", "guest_user"))
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "change_me_to_a_secure_password")
+RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "")
 RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
 QUEUE_STOCKOUT = os.getenv("RABBITMQ_QUEUE_STOCKOUT_ALERTS", "mercaandes.alerts.stockout")
 

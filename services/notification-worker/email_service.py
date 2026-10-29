@@ -25,29 +25,6 @@ def format_purchase_email(
     status: str = "Confirmado / En preparación",
     company: str = "MercaAndes",
 ) -> str:
-    """
-    Renders the exact purchase confirmation email requested for MercaAndes:
-
-    ¡Hola, [Nombre del Cliente]! 
-
-    ¡Buenas noticias! Tu pedido ha sido procesado con éxito.
-
-    Conoce los detalles de tu compra:
-    - Empresa: MercaAndes
-    - N° de Pedido: MA-2026-89412
-    - Estado: Confirmado / En preparación
-    - Fecha de Compra: 28-10-2026
-    - Productos:
-      * 1x Aceite de Oliva Extra Virgen (500ml) - $35.000
-      * 2x Café Molido Especial (500g) - $48.000
-    - Total pagado: $83.000
-
-    Puedes realizar el seguimiento de tu envío ingresando a Mis Compras > Detalle de Pedido.
-
-    ¡Gracias por comprar en MercaAndes!
-    Atentamente,
-    Equipo de Atención al Cliente | MercaAndes
-    """
     product_lines = []
     for item in products:
         qty = item.get("quantity", 1)

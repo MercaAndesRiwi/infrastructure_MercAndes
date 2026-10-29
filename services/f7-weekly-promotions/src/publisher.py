@@ -25,8 +25,8 @@ def _kafka_producer() -> KafkaProducer:
 
 def _rabbitmq_connection() -> pika.BlockingConnection:
     credentials = pika.PlainCredentials(
-        os.getenv("RABBITMQ_USER", "guest_user"),
-        os.getenv("RABBITMQ_PASSWORD", "change_me"),
+        os.getenv("RABBITMQ_USER", ""),
+        os.getenv("RABBITMQ_PASSWORD", ""),
     )
     return pika.BlockingConnection(
         pika.ConnectionParameters(

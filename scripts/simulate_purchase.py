@@ -65,7 +65,7 @@ def publish_to_rabbitmq(payload: dict) -> bool:
     rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
     rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
     rabbitmq_user = os.getenv("RABBITMQ_USER", os.getenv("RABBITMQ_USERNAME", "guest_user"))
-    rabbitmq_password = os.getenv("RABBITMQ_PASSWORD", "change_me_to_a_secure_password")
+    rabbitmq_password = os.getenv("RABBITMQ_PASSWORD", "")
     rabbitmq_vhost = os.getenv("RABBITMQ_VHOST", "/")
     queue_name = os.getenv("RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS", "mercaandes.notifications.purchase")
 
