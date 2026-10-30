@@ -12,16 +12,16 @@ Architecture: Optimized for AWS Multi-Worker Cluster (ECS / EC2 + RabbitMQ + RDS
 
 from __future__ import annotations
 
-import json
-import os
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 
-import pika
 from airflow import DAG
 from airflow.utils.timezone import datetime as airflow_datetime
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.task_group import TaskGroup
+from operational_messaging.config import STOCKOUT_QUEUE
+from operational_messaging.messages import new_message
+from operational_messaging.rabbitmq import publish_messages
 
 try:
     from airflow.operators.empty import EmptyOperator
@@ -40,14 +40,6 @@ default_args = {
     "max_retry_delay": timedelta(minutes=30),
     "execution_timeout": timedelta(minutes=30),
 }
-
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
-RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
-RABBITMQ_USER = os.getenv("RABBITMQ_USER", os.getenv("RABBITMQ_USERNAME", "guest_user"))
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "")
-RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
-QUEUE_STOCKOUT = os.getenv("RABBITMQ_QUEUE_STOCKOUT_ALERTS", "mercaandes.alerts.stockout")
-
 
 def calculate_stockout_risk(**context):
     """
@@ -98,7 +90,7 @@ def calculate_stockout_risk(**context):
             AND o.status NOT IN ('cancelled', 'exception_return')
             GROUP BY store_id, product_id
         ) s ON s.store_id = ai.store_id AND s.product_id = ai.product_id
-        JOIN inventory i ON i.store_id = ai.store_id AND i.product_id = i.product_id
+        JOIN inventory i ON i.store_id = ai.store_id AND i.product_id = ai.product_id
         ON CONFLICT (store_id, product_id)
         DO UPDATE SET available_stock = EXCLUDED.available_stock,
                     avg_daily_sales = EXCLUDED.avg_daily_sales,
@@ -119,8 +111,7 @@ def calculate_stockout_risk(**context):
 
 def publish_stockout_alerts(**context):
     """
-    Publishes stockout risk alerts to RabbitMQ queue: mercaandes.alerts.stockout.
-    Compatible with EC2 RabbitMQ in private compute subnet.
+    Publishes stockout risk alerts to the durable operational RabbitMQ route.
     """
     pg_hook = PostgresHook(postgres_conn_id="pos_db")
     conn = pg_hook.get_conn()
@@ -142,40 +133,22 @@ def publish_stockout_alerts(**context):
         print("[RN-04] No products at stockout risk.")
         return 0
 
-    credentials = pika.PlainCredentials(RABBITMQ_USER, RABBITMQ_PASSWORD)
-    connection = pika.BlockingConnection(
-        pika.ConnectionParameters(
-            host=RABBITMQ_HOST,
-            port=RABBITMQ_PORT,
-            virtual_host=RABBITMQ_VHOST,
-            credentials=credentials,
-        )
-    )
-    try:
-        channel = connection.channel()
-        channel.queue_declare(queue=QUEUE_STOCKOUT, durable=True)
-
-        for store_id, product_id, stock, avg_sales, days_until, threshold in risks:
-            alert = {
-                "alert_type": "STOCKOUT_RISK",
+    messages = [
+        new_message(
+            "STOCKOUT_RISK",
+            {
                 "store_id": store_id,
                 "product_id": product_id,
                 "available_stock": float(stock) if stock else 0,
                 "average_daily_sales": float(avg_sales) if avg_sales else 0,
                 "days_until_stockout": float(days_until) if days_until else None,
                 "threshold_days": threshold,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            channel.basic_publish(
-                exchange="",
-                routing_key=QUEUE_STOCKOUT,
-                body=json.dumps(alert),
-                properties=pika.BasicProperties(delivery_mode=2),
-            )
-    finally:
-        connection.close()
-
-    print(f"[RN-04] Published {len(risks)} stockout alerts to RabbitMQ queue: {QUEUE_STOCKOUT}")
+            },
+        )
+        for store_id, product_id, stock, avg_sales, days_until, threshold in risks
+    ]
+    publish_messages(STOCKOUT_QUEUE, messages)
+    print(f"[RN-04] Published {len(messages)} persistent alerts to {STOCKOUT_QUEUE}")
     return len(risks)
 
 
@@ -233,7 +206,7 @@ with DAG(
     
     1. **TaskGroup: `stockout_risk_monitoring` (Worker 1)**:
        - `RN-04`: Evalúa el riesgo de quiebre de stock cruzando con el calendario de festivos (umbral de 3 o 5 días).
-       - Publica las alertas críticas a RabbitMQ (`mercaandes.alerts.stockout`).
+       - Publica las alertas críticas a RabbitMQ (`alertas.riesgo_quiebre`).
     2. **TaskGroup: `seller_inventory_performance` (Worker 2 - En Paralelo)**:
        - `RN-09`: Calcula la exactitud de inventario por vendedor en ventana móvil de 30 días.
     """,

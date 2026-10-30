@@ -29,7 +29,7 @@ services:
     ports: ["${RABBITMQ_PORT:-5672}:5672", "${RABBITMQ_MGMT_PORT:-15672}:15672"]
     volumes: [rabbit-data:/var/lib/rabbitmq]
     healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      test: ["CMD-SHELL", "rabbitmq-diagnostics -q ping && rabbitmq-diagnostics -q check_port_connectivity"]
       interval: 15s
       retries: 10
       start_period: 20s
@@ -127,6 +127,7 @@ services:
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
       - ./airflow/logs:/opt/airflow/logs
     command: version
     depends_on:
@@ -161,6 +162,7 @@ services:
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
       - ./airflow/logs:/opt/airflow/logs
       - ./inputs/f7_promotions:/opt/inputs/f7_promotions:ro
       - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
@@ -199,6 +201,7 @@ services:
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
       - ./airflow/logs:/opt/airflow/logs
       - ./inputs/f7_promotions:/opt/inputs/f7_promotions:ro
       - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
@@ -232,6 +235,7 @@ services:
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
       - ./airflow/logs:/opt/airflow/logs
       - ./inputs/f7_promotions:/opt/inputs/f7_promotions:ro
       - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
@@ -267,6 +271,7 @@ services:
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
+      - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
       - ./airflow/logs:/opt/airflow/logs
       - ./inputs/f7_promotions:/opt/inputs/f7_promotions:ro
       - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
@@ -377,8 +382,67 @@ services:
       rabbitmq: {condition: service_healthy}
     restart: unless-stopped
 
+  operational-alerts-worker:
+    build: ./services/operational-messaging
+    container_name: platform-operational-alerts-worker
+    env_file: [.env]
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
+      RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
+      ALERT_LOG_PATH: /app/alerts/processed.jsonl
+    volumes:
+      - alerts-data:/app/alerts
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+  reports-api:
+    build: ./services/operational-messaging
+    container_name: platform-reports-api
+    env_file: [.env]
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
+      RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
+    ports: ["${REPORTS_API_PORT:-8005}:8000"]
+    command: ["uvicorn", "operational_messaging.api:app", "--host", "0.0.0.0", "--port", "8000"]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+    restart: unless-stopped
+
+  reports-worker:
+    build: ./services/operational-messaging
+    container_name: platform-reports-worker
+    env_file: [.env]
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
+      RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
+      POS_DB_HOST: postgres
+      POS_DB_PORT: "5432"
+      POS_DB_NAME: "${POS_DB_NAME}"
+      POS_DB_USER: "${POS_DB_USER}"
+      POS_DB_PASSWORD: "${POS_DB_PASSWORD}"
+      REPORTS_OUTPUT_DIR: /app/reports
+    volumes:
+      - reports-data:/app/reports
+    command: ["python", "-m", "operational_messaging.reports"]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+    restart: unless-stopped
+
 volumes:
   pgdata:
   rabbit-data:
   kafka-data:
   spark-work:
+  alerts-data:
+  reports-data:

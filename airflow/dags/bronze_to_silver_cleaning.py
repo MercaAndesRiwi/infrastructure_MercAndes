@@ -22,6 +22,9 @@ from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.task_group import TaskGroup
+from operational_messaging.config import DATA_QUALITY_QUEUE
+from operational_messaging.messages import new_message
+from operational_messaging.rabbitmq import publish_message
 
 try:
     from airflow.operators.empty import EmptyOperator
@@ -124,6 +127,31 @@ def verify_silver_layer_quality(**context):
     return True
 
 
+def publish_duplicate_data_alert(**context):
+    """Publish a data-quality alert when RN-10 removes duplicate events."""
+    task_instance = context["ti"]
+    result = task_instance.xcom_pull(
+        task_ids="bronze_cleaning_compliance.rn_10_deduplicate_late_events"
+    ) or {}
+    duplicates_removed = int(result.get("duplicates_removed", 0))
+    if duplicates_removed == 0:
+        print("[DATA QUALITY] No duplicate events detected; no alert was sent.")
+        return 0
+
+    message = new_message(
+        "DATA_QUALITY_DUPLICATES",
+        {
+            "source": "marketplace_events",
+            "issue": "duplicate_events_removed",
+            "records_affected": duplicates_removed,
+            "dag_run_id": context["run_id"],
+        },
+    )
+    publish_message(DATA_QUALITY_QUEUE, message)
+    print(f"[DATA QUALITY] Published alert for {duplicates_removed} duplicate events.")
+    return duplicates_removed
+
+
 with DAG(
     dag_id="bronze_to_silver_cleaning",
     default_args=default_args,
@@ -163,11 +191,19 @@ with DAG(
             doc_md="Descarta eventos duplicados e incorpora eventos con retraso <= 72h.",
         )
 
+        t_quality_alert = PythonOperator(
+            task_id="publish_duplicate_data_alert",
+            python_callable=publish_duplicate_data_alert,
+            doc_md="Publishes a RabbitMQ alert when duplicate records are removed.",
+        )
+
         t_anonymize = PythonOperator(
             task_id="rn_11_anonymize_personal_data",
             python_callable=anonymize_personal_data,
             doc_md="Aplica hash MD5 a nombres, documentos y correos de clientes.",
         )
+
+        t_deduplicate >> [t_quality_alert, t_anonymize]
 
     with TaskGroup("spark_silver_transformations", tooltip="Fase 2: Transformaciones analíticas con Apache Spark (2 Workers)") as tg_spark:
         t_net_sales = SparkSubmitOperator(

@@ -8,9 +8,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN pip install --no-cache-dir uv
 
-COPY pyproject.toml uv.lock ./
+COPY pyproject.toml ./
 
-RUN uv sync --locked --no-dev
+RUN uv sync --no-dev
 
 COPY app.py ./app.py
 COPY src ./src

@@ -77,7 +77,10 @@ docker compose up -d --build
 | **inventory-api** | `http://localhost:8002/health` | Consulta de inventario (F3) |
 | **marketplace-api** | `http://localhost:8003/health` | Eventos de pedidos Marketplace (F4) |
 | **f7-weekly-promotions** | `http://localhost:8004/health` | Ingesta de promociones semanales (F7) |
+| **reports-api** | `http://localhost:8005/health` | Encola solicitudes de reportes sin esperar al worker |
 | **notification-worker** | Contenedor en background | Consumidor RabbitMQ y despachador de emails |
+| **operational-alerts-worker** | Contenedor en background | Consumidor de alertas de calidad y riesgo |
+| **reports-worker** | Contenedor en background | Generador asíncrono de reportes de riesgo |
 | **Airflow UI** | `http://localhost:8080` | Orquestador en CeleryExecutor (Usuario: `airflow` / Clave: `airflow`) |
 | **Airflow Workers** | 2 Contenedores en background | Worker 1 y Worker 2 ejecutando tareas de DAGs en paralelo |
 | **Airflow Flower** | `http://localhost:5555` | Monitor visual de Celery Workers y colas |
@@ -195,7 +198,11 @@ La plataforma está adaptada para desplegarse directamente en la infraestructura
 | **Kafka Topic Órdenes** | `mercaandes.orders.events` | `marketplace-api` |
 | **Kafka Topic Promociones** | `mercaandes.promotions.weekly` | `f7-weekly-promotions` |
 | **RabbitMQ Cola Compras** | `mercaandes.notifications.purchase` | `simulate_purchase.py`, `notification-worker` |
-| **RabbitMQ Cola Quiebres** | `mercaandes.alerts.stockout` | `silver_to_gold_business_rules` (RN-04) |
+| **RabbitMQ Cola Quiebres** | `alertas.riesgo_quiebre` | `silver_to_gold_business_rules` (RN-04) |
 | **RabbitMQ Cola Tienda Silenciosa** | `mercaandes.alerts.silent-store` | `f7_promotions_weekly` (RN-12) |
 | **RabbitMQ Cola Ingesta F7** | `mercaandes.promotions.weekly.ingest`| `f7-weekly-promotions` |
 | **Base de Datos Relacional** | `merca_pos` | PostgreSQL / Amazon RDS |
+
+## 7. Operational RabbitMQ Messaging (US-03)
+
+The operational message routes, consumers, retry policy, dead-letter queues, report API, and ten-minute durability procedure are documented in [RabbitMQ operational messaging](docs/rabbitmq-operational-messaging.md).
