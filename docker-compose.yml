@@ -210,6 +210,31 @@ services:
       airflow-init: {condition: service_completed_successfully}
     restart: unless-stopped
 
+  airflow-dag-processor:
+    image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.1.5}
+    container_name: platform-airflow-dag-processor
+    env_file: [.env]
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
+    volumes:
+      - ./airflow/dags:/opt/airflow/dags
+      - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
+      - ./airflow/logs:/opt/airflow/logs
+      - ./inputs/f7_promotions:/opt/inputs/f7_promotions:ro
+      - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
+    command: dag-processor
+    depends_on:
+      postgres: {condition: service_healthy}
+      airflow-init: {condition: service_completed_successfully}
+    restart: unless-stopped
+
   airflow-worker-1:
     image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.1.5}
     container_name: platform-airflow-worker-1
@@ -300,37 +325,61 @@ services:
       airflow-init: {condition: service_completed_successfully}
     restart: unless-stopped
 
-  pos-api:
-    build: ./services/pos-api
-    container_name: platform-pos-api
+  pos-database:
+    build:
+      context: ../Transactional-POS-database
+      dockerfile: Dockerfile
+    container_name: platform-pos-database
     env_file: [.env]
     environment:
-      PYTHONPATH: /opt/domain
+      DATABASE_URL: postgresql+psycopg://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@postgres:5432/${POS_DB_NAME:-merca_pos}
+      SEED_CUSTOMERS: ${SEED_CUSTOMERS:-1000}
+      SEED_SALES_PER_COUNTRY: ${SEED_SALES_PER_COUNTRY:-100}
+      SEED_RANDOM: ${SEED_RANDOM:-42}
+      SEED_START_DATE: ${SEED_START_DATE:-2025-01-01}
+      SEED_END_DATE: ${SEED_END_DATE:-2025-12-31}
+      SEED_BATCH_SIZE: ${SEED_BATCH_SIZE:-2000}
+    command: ["sh", "-c", "alembic upgrade head && python -m transactional_pos.presentation.cli.seed_all"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  inventory-api:
+    build:
+      context: ../Inventory_Api
+      dockerfile: Dockerfile
+    container_name: platform-inventory-api
+    env_file: [.env]
+    environment:
       POS_DB_HOST: postgres
-    ports: ["${POS_API_PORT:-8001}:8000"]
-    volumes: [../data-processing:/opt/domain:ro]
+      POS_DB_PORT: "5432"
+      POS_DB_NAME: "${POS_DB_NAME}"
+      POS_DB_USER: "${POS_DB_USER}"
+      POS_DB_PASSWORD: "${POS_DB_PASSWORD}"
+      MASTER_SEED: "${MASTER_SEED:-42}"
+      API_HOST: "0.0.0.0"
+      API_PORT: "8000"
+    ports: ["${INVENTORY_API_PORT:-8002}:8000"]
     depends_on:
       postgres: {condition: service_healthy}
     restart: unless-stopped
 
-  inventory-api:
-    build: ./services/inventory-api
-    container_name: platform-inventory-api
-    env_file: [.env]
-    environment:
-      PYTHONPATH: /opt/domain
-    ports: ["${INVENTORY_API_PORT:-8002}:8000"]
-    volumes: [../data-processing:/opt/domain:ro]
-    restart: unless-stopped
-
   marketplace-api:
-    build: ./services/marketplace-api
+    build:
+      context: ../Marketplace_Api
+      dockerfile: Dockerfile
     container_name: platform-marketplace-api
     env_file: [.env]
     environment:
-      PYTHONPATH: /opt/domain
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_ENABLED: "${KAFKA_ENABLED:-true}"
+      KAFKA_TOPIC_ORDERS: "${KAFKA_TOPIC_ORDERS:-mercaandes.orders.events}"
+      SERVER_HOST: "0.0.0.0"
+      SERVER_PORT: "8000"
+      MASTER_SEED: "${MASTER_SEED:-42}"
     ports: ["${MARKETPLACE_API_PORT:-8003}:8000"]
-    volumes: [../data-processing:/opt/domain:ro]
+    depends_on:
+      kafka: {condition: service_healthy}
     restart: unless-stopped
 
   f7-weekly-promotions:
@@ -338,7 +387,6 @@ services:
     container_name: platform-f7-weekly-promotions
     env_file: [.env]
     environment:
-      PYTHONPATH: /opt/domain
       S3_DATA_LAKE_BUCKET_NAME: ${S3_DATA_LAKE_BUCKET_NAME}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}

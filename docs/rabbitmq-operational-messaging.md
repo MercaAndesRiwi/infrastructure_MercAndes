@@ -28,17 +28,32 @@ flowchart LR
 
 The durable direct exchange `mercaandes.operational` uses each queue name as its routing key:
 
-| Routing key / queue | Producer | Consumer |
-| --- | --- | --- |
-| `alertas.calidad_datos` | `bronze_to_silver_cleaning` when RN-10 removes duplicate marketplace events | `operational-alerts-worker` |
-| `alertas.riesgo_quiebre` | `silver_to_gold_business_rules` after RN-04 stockout-risk calculation | `operational-alerts-worker` |
-| `tareas.reportes` | `POST /api/v1/reports` on `reports-api` | `reports-worker` |
+
+| Routing key / queue      | Producer                                                                    | Consumer                    |
+| -------------------------- | ----------------------------------------------------------------------------- | ----------------------------- |
+| `alertas.calidad_datos`  | `bronze_to_silver_cleaning` when RN-10 removes duplicate marketplace events | `operational-alerts-worker` |
+| `alertas.riesgo_quiebre` | `silver_to_gold_business_rules` after RN-04 stockout-risk calculation       | `operational-alerts-worker` |
+| `tareas.reportes`        | `POST /api/v1/reports` on `reports-api`                                     | `reports-worker`            |
 
 Every primary queue is durable and points to the durable exchange `mercaandes.operational.dlx`. Its dead-letter queue is named `<queue>.dlq`. Each route also has a durable `<queue>.retry` queue with a five-second TTL. Failed messages are republished with a retry counter up to three times; the next failure is sent to the DLQ. The publisher waits for broker confirms before acknowledging the original delivery.
 
 All published messages use persistent delivery mode. Consumers use `auto_ack=False` and ACK only after successful processing. RabbitMQ stores queue data in the existing `rabbit-data` volume. These settings protect messages while consumers are stopped and preserve queued data across container restarts; they do not make a single local broker highly available.
 
 The alerts worker appends successfully processed alerts to the `alerts-data` volume. The report worker creates a CSV file in `reports-data`. The initial report type is `stockout_risk`, sourced from `gold_stockout_risk`.
+
+## Running the services with Docker Compose
+
+Start the operational messaging infrastructure and microservices directly with Docker Compose:
+
+```powershell
+docker compose up -d --build rabbitmq operational-alerts-worker reports-api reports-worker
+```
+
+This starts:
+- **`rabbitmq`**: Broker with management UI on `http://localhost:15672`.
+- **`operational-alerts-worker`**: Listens to `alertas.calidad_datos` and `alertas.riesgo_quiebre`, persisting processed alerts in the `alerts-data` volume (`/app/alerts/processed.jsonl`).
+- **`reports-api`**: FastAPI service on port `8005` (`http://localhost:8005/docs`).
+- **`reports-worker`**: Consumes `tareas.reportes`, queries PostgreSQL `gold_stockout_risk`, and writes CSVs to `reports-data` volume.
 
 ## Request a report
 
@@ -86,30 +101,34 @@ To verify bounded retries and dead-letter routing with an intentionally invalid 
 
 ## Automated tests
 
-The service has unit tests for queue names, the message envelope, the retry decision, and alert validation. An optional integration test declares the topology against a running broker.
+The service has unit tests for queue names, the message envelope, the retry decision, and alert validation. Dependencies and virtual environments are managed cleanly with `uv` (`pyproject.toml` / `uv.lock`), completely eliminating `requirements.txt`.
+
+### Running tests with uv (Local)
+
+Run tests directly without manual `pip install`:
 
 ```powershell
 cd services/operational-messaging
-python -m pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest
+uv run pytest
 
-# Optional integration check (RabbitMQ must be running and reachable):
+# Optional integration check (RabbitMQ container must be running and reachable):
 $env:RUN_RABBITMQ_TESTS = "1"
-python -m pytest -m integration
+uv run pytest -m integration
 ```
 
 ## Code layout
 
 The service is intentionally flat:
 
-| Module | Responsibility |
-| --- | --- |
-| `config.py` | Queue names, retry limits and DLQ helpers |
-| `messages.py` | Standard message envelope |
-| `rabbitmq.py` | Connection, topology, publisher and manual-ACK consumer |
-| `alerts.py` | Alert consumer entrypoint |
-| `reports.py` | Stockout-risk query, CSV writer and consumer entrypoint |
-| `api.py` | FastAPI report endpoint |
-| `publish_test_alerts.py` | Durability and DLQ test producer |
+
+| Module                   | Responsibility                                          |
+| -------------------------- | --------------------------------------------------------- |
+| `config.py`              | Queue names, retry limits and DLQ helpers               |
+| `messages.py`            | Standard message envelope                               |
+| `rabbitmq.py`            | Connection, topology, publisher and manual-ACK consumer |
+| `alerts.py`              | Alert consumer entrypoint                               |
+| `reports.py`             | Stockout-risk query, CSV writer and consumer entrypoint |
+| `api.py`                 | FastAPI report endpoint                                 |
+| `publish_test_alerts.py` | Durability and DLQ test producer                        |
 
 Delivery is at-least-once: a retry is published and confirmed before the original delivery is acknowledged. If the consumer dies between those two steps, the message is redelivered. Deduplicate by `message_id` if the alert log must be exact.
