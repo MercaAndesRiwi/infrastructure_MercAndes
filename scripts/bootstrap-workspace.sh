@@ -6,7 +6,7 @@ PLATFORM_DIR="$(dirname "$SCRIPT_DIR")"
 PARENT_DIR="$(dirname "$PLATFORM_DIR")"
 
 echo "=========================================================="
-echo "   MercaAndes Workspace Setup & Compatibility Bootstrap   "
+echo "   MercaAndes Workspace Setup & Auto-Healing Bootstrap    "
 echo "=========================================================="
 echo "Directorio Data Platform: $PLATFORM_DIR"
 echo "Directorio Padre (Workspace): $PARENT_DIR"
@@ -21,28 +21,32 @@ else
     echo "[OK] Archivo .env ya existe."
 fi
 
-# 2. Verificar y clonar repositorios hermanos
+# 2. Verificar y clonar repositorios hermanos con Auto-Healing
 REPOS=(
-    "Transactional-POS-database:https://github.com/MercaAndesRiwi/Transactional-POS-database.git"
-    "Inventory_Api:https://github.com/MercaAndesRiwi/Inventory_Api.git"
-    "Marketplace_Api:https://github.com/MercaAndesRiwi/Marketplace_Api.git"
-    "MercaAndes_Spark_Gold_Transformations:https://github.com/MercaAndesRiwi/MercaAndes_Spark_Gold_Transformations.git"
-    "api-exchange-rates:https://github.com/MercaAndesRiwi/api-exchange-rates.git"
-    "api-holidays:https://github.com/MercaAndesRiwi/api-holidays.git"
+    "Transactional-POS-database:https://github.com/MercaAndesRiwi/Transactional-POS-database.git:Dockerfile"
+    "Inventory_Api:https://github.com/MercaAndesRiwi/Inventory_Api.git:Dockerfile"
+    "Marketplace_Api:https://github.com/MercaAndesRiwi/Marketplace_Api.git:Dockerfile"
+    "MercaAndes_Spark_Gold_Transformations:https://github.com/MercaAndesRiwi/MercaAndes_Spark_Gold_Transformations.git:src"
+    "api-exchange-rates:https://github.com/MercaAndesRiwi/api-exchange-rates.git:Dockerfile"
+    "api-holidays:https://github.com/MercaAndesRiwi/api-holidays.git:Dockerfile"
 )
 
 echo ""
 echo "Verificando repositorios complementarios..."
 for item in "${REPOS[@]}"; do
-    NAME="${item%%:*}"
-    URL="${item#*:}"
+    IFS=':' read -r NAME URL KEYFILE <<< "$item"
     TARGET="$PARENT_DIR/$NAME"
     if [ ! -d "$TARGET" ]; then
         echo "[+] Clonando repositorio faltante: $NAME..."
         git clone "$URL" "$TARGET"
         echo "[OK] $NAME clonado correctamente."
+    elif [ ! -e "$TARGET/$KEYFILE" ]; then
+        echo "[!] Carpeta $NAME existe pero le falta $KEYFILE. Re-clonando..."
+        rm -rf "$TARGET"
+        git clone "$URL" "$TARGET"
+        echo "[OK] $NAME re-clonado con exito."
     else
-        echo "[OK] $NAME ya esta presente en el workspace."
+        echo "[OK] $NAME esta presente y completo en el workspace."
     fi
 done
 
