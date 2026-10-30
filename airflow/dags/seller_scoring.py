@@ -14,7 +14,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from airflow import DAG
-from airflow.utils.timezone import datetime as airflow_datetime
+import pendulum
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.task_group import TaskGroup
@@ -180,7 +180,7 @@ with DAG(
     default_args=default_args,
     description="Seller scoring and status management (RN-07, RN-08) in Gold layer.",
     schedule="@weekly",
-    start_date=airflow_datetime(2026, 1, 1, tzinfo="America/Bogota"),
+    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
     catchup=False,
     max_active_runs=1,
     tags=["layer:gold", "seller", "scoring", "compliance", "mercaandes"],

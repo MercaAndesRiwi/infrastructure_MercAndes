@@ -17,7 +17,7 @@ import os
 from datetime import timedelta
 
 from airflow import DAG
-from airflow.utils.timezone import datetime as airflow_datetime
+import pendulum
 from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -157,7 +157,7 @@ with DAG(
     default_args=default_args,
     description="Cleaning, compliance and business rules Bronze -> Silver (RN-01, 02, 03, 06, 10, 11).",
     schedule="@daily",
-    start_date=airflow_datetime(2026, 1, 1, tzinfo="America/Bogota"),
+    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
     catchup=False,
     max_active_runs=1,
     tags=["layer:silver", "pipeline:bronze-to-silver", "cleaning", "compliance", "mercaandes"],

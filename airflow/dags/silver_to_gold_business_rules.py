@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 from airflow import DAG
-from airflow.utils.timezone import datetime as airflow_datetime
+import pendulum
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.task_group import TaskGroup
@@ -195,7 +195,7 @@ with DAG(
     default_args=default_args,
     description="Business rules Silver -> Gold (RN-04, RN-09). Distributes alerts to RabbitMQ queue.",
     schedule="@daily",
-    start_date=airflow_datetime(2026, 1, 1, tzinfo="America/Bogota"),
+    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
     catchup=False,
     max_active_runs=1,
     tags=["layer:gold", "business-rules", "inventory", "alerts", "mercaandes"],
