@@ -1,6 +1,6 @@
 # Data Platform — MercaAndes
 
-Plataforma centralizada de orquestación y datos de MercaAndes: **PostgreSQL (RDS), RabbitMQ, Kafka, Apache Spark (1 Master + 2 Workers), Apache Airflow, Microservicios API y Worker de Notificaciones de Compra**.
+Plataforma centralizada de orquestación y datos de MercaAndes: **PostgreSQL (RDS), RabbitMQ, Kafka, Apache Spark (1 Master + 2 Workers), Apache Airflow (CeleryExecutor), Microservicios API y Workers de Alertas y Notificaciones**.
 
 ---
 
@@ -9,61 +9,58 @@ Plataforma centralizada de orquestación y datos de MercaAndes: **PostgreSQL (RD
 - **Docker Desktop** (Docker Compose v2) con mínimo **8 GB de RAM** asignados.
 - **PowerShell** (Windows) o **Bash** (Linux/macOS).
 - **Python 3.12+** instalado.
+- **Git** configurado con acceso a la organización MercaAndesRiwi.
 
 ---
 
 ## 2. Paso a Paso de Ejecución Local
 
-### Paso 2.1: Preparar Variables de Entorno
+Esta plataforma orquesta e integra los 7 repositorios de la solución **MercaAndes**:
+1. `infrastructure_MercAndes` (`data-platform`): Orquestador central (este repositorio).
+2. `Transactional-POS-database`: Migraciones Alembic y semillas del POS transaccional (`pos-database`).
+3. `Inventory_Api`: Microservicio FastAPI de consulta de inventario (`inventory-api`, puerto `8002`).
+4. `Marketplace_Api`: Microservicio FastAPI y productor Kafka de pedidos (`marketplace-api`, puerto `8003`).
+5. `MercaAndes_Spark_Gold_Transformations`: Transformaciones PySpark montadas en el clúster Spark.
+6. `api-exchange-rates`: Ingesta batch de tasas de cambio a PostgreSQL (`exchange-rates-seed`).
+7. `api-holidays`: Ingesta batch de días festivos a PostgreSQL (`holidays-seed`).
 
-Desde la carpeta `data-platform`:
+---
 
+### Paso 2.1: Bootstrap Automático del Workspace y Variables de Entorno
+
+Para garantizar compatibilidad en cualquier equipo (crea el archivo `.env` y clona/valida los repositorios complementarios):
+
+**En Windows (PowerShell):**
 ```powershell
-Copy-Item .env.example .env
+.\scripts\bootstrap-workspace.ps1
 ```
 
-Edite el archivo `.env` según corresponda:
-- **AWS S3:** Defina `S3_DATA_LAKE_BUCKET_NAME`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`.
-- **SMTP (Email):**
-  - *Modo Simulación (Recomendado en local):* Deje `SMTP_HOST=` vacío. El sistema procesa el pedido e imprime el correo completo en logs sin fallar.
-  - *Envío Real con Gmail:* `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_USER=tu_correo@gmail.com`, `SMTP_PASSWORD=tu_app_password`.
-  - *Producción AWS SES:* `SMTP_HOST=email-smtp.us-east-1.amazonaws.com`, `SMTP_PORT=587`.
-
-### Paso 2.2: Inicialización y Gestión de Dependencias con `uv` (Por Microservicio)
-
-Cada microservicio en `services/` gestiona su entorno y dependencias de forma aislada mediante `uv`. Si se inicializan desde cero o se actualizan sus paquetes:
-
-```powershell
-# 1. inventory-api (F3 - Consulta de Inventario)
-cd services/inventory-api
-uv init --name inventory-api --bare
-uv add fastapi uvicorn
-
-# 2. marketplace-api (F4 - Eventos de Pedidos Marketplace)
-cd ..\marketplace-api
-uv init --name marketplace-api --bare
-uv add fastapi uvicorn python-dotenv
-
-# 3. pos-api (F2 - Transacciones POS y Base de Datos)
-cd ..\pos-api
-uv init --name pos-api --bare
-uv add fastapi uvicorn sqlalchemy "psycopg[binary]" python-dotenv
-
-# 4. f7-weekly-promotions (F7 - Ingesta de Promociones)
-cd ..\f7-weekly-promotions
-uv lock
-
-# Regresar a la raíz de data-platform
-cd ..\..
+**En Linux / macOS (Bash):**
+```bash
+./scripts/bootstrap-workspace.sh
 ```
 
-### Paso 2.3: Construir e Iniciar Contenedores
+> **Nota:** Si prefieres configurar `.env` manualmente:
+> ```powershell
+> Copy-Item .env.example .env
+> ```
+> Edite el archivo `.env` según corresponda (AWS S3, credenciales y SMTP).
+
+---
+
+### Paso 2.2: Construir e Iniciar Contenedores
+
+Desde la raíz de `data-platform`:
 
 ```powershell
 docker compose up -d --build
 ```
 
-### Paso 2.4: Verificar Salud de los Servicios
+---
+
+### Paso 2.3: Verificar Salud de los Servicios
+
+Una vez iniciados los servicios, ejecute el script de verificación rápida:
 
 ```powershell
 .\scripts\smoke.ps1
@@ -73,22 +70,26 @@ docker compose up -d --build
 
 | Servicio | URL / Puerto | Función |
 | :--- | :--- | :--- |
-| **pos-api** | `http://localhost:8001/health` | Ventas POS (F2) |
-| **inventory-api** | `http://localhost:8002/health` | Consulta de inventario (F3) |
-| **marketplace-api** | `http://localhost:8003/health` | Eventos de pedidos Marketplace (F4) |
-| **f7-weekly-promotions** | `http://localhost:8004/health` | Ingesta de promociones semanales (F7) |
-| **reports-api** | `http://localhost:8005/health` | Encola solicitudes de reportes sin esperar al worker |
-| **notification-worker** | Contenedor en background | Consumidor RabbitMQ y despachador de emails |
-| **operational-alerts-worker** | Contenedor en background | Consumidor de alertas de calidad y riesgo |
-| **reports-worker** | Contenedor en background | Generador asíncrono de reportes de riesgo |
+| **inventory-api** | `http://localhost:8002/` | Consulta de inventario y stock determinista (F3) |
+| **marketplace-api** | `http://localhost:8003/` | Eventos de pedidos Marketplace y productor Kafka (F4) |
+| **f7-weekly-promotions** | `http://localhost:8004/health` | Ingesta de promociones semanales en S3/Kafka/RabbitMQ (F7) |
+| **reports-api** | `http://localhost:8005/health` | Encola solicitudes de reportes operacionales (US-03) |
+| **pos-database** | Tarea Batch (`restart: no`) | Migraciones Alembic + Siembra de clientes y ventas POS (F2) |
+| **exchange-rates-seed** | Tarea Batch (`restart: no`) | Ingesta de tasas de cambio diarias desde Frankfurter API |
+| **holidays-seed** | Tarea Batch (`restart: no`) | Ingesta de feriados desde Nager.Date API para reglas de stockout |
+| **notification-worker** | Worker en background | Consumidor RabbitMQ y despachador de emails transaccionales |
+| **operational-alerts-worker** | Worker en background | Consumidor de alertas de quiebre y calidad (US-03) |
+| **reports-worker** | Worker en background | Generador asíncrono de reportes de riesgo (US-03) |
 | **Airflow UI** | `http://localhost:8080` | Orquestador en CeleryExecutor (Usuario: `airflow` / Clave: `airflow`) |
-| **Airflow Workers** | 2 Contenedores en background | Worker 1 y Worker 2 ejecutando tareas de DAGs en paralelo |
+| **Airflow Workers** | 2 Workers en background | Worker 1 y Worker 2 ejecutando tareas de DAGs en paralelo |
 | **Airflow Flower** | `http://localhost:5555` | Monitor visual de Celery Workers y colas |
 | **Spark Master UI** | `http://localhost:8081` | Clúster Spark (Master + 2 Workers en :7077) |
 | **RabbitMQ Mgmt** | `http://localhost:15672` | Broker (Usuario: `guest_user` / Clave: `.env`) |
 | **Kafka UI (Kafdrop)** | `http://localhost:9000` | Monitor de topics de Kafka (:9092) |
 
-### Paso 2.5: Detener la Plataforma
+---
+
+### Paso 2.4: Detener la Plataforma
 
 ```powershell
 docker compose down
@@ -202,6 +203,8 @@ La plataforma está adaptada para desplegarse directamente en la infraestructura
 | **RabbitMQ Cola Tienda Silenciosa** | `mercaandes.alerts.silent-store` | `f7_promotions_weekly` (RN-12) |
 | **RabbitMQ Cola Ingesta F7** | `mercaandes.promotions.weekly.ingest`| `f7-weekly-promotions` |
 | **Base de Datos Relacional** | `merca_pos` | PostgreSQL / Amazon RDS |
+
+---
 
 ## 7. Operational RabbitMQ Messaging (US-03)
 
