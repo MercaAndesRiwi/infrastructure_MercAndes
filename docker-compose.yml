@@ -344,6 +344,45 @@ services:
       postgres: {condition: service_healthy}
     restart: "no"
 
+  exchange-rates-seed:
+    build:
+      context: ../api-exchange-rates
+      dockerfile: Dockerfile
+    container_name: platform-exchange-rates
+    env_file: [.env]
+    environment:
+      POS_DB_HOST: postgres
+      POS_DB_PORT: "5432"
+      POS_DB_NAME: "${POS_DB_NAME}"
+      POS_DB_USER: "${POS_DB_USER}"
+      POS_DB_PASSWORD: "${POS_DB_PASSWORD}"
+      API_URL: "https://api.frankfurter.dev/v2/rates"
+      START_DATE: "${EXCHANGE_START_DATE:-2025-01-01}"
+      END_DATE: "${EXCHANGE_END_DATE:-2026-12-31}"
+      TARGET_CURRENCIES: "${TARGET_CURRENCIES:-COP,PEN,BOB,CLP}"
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
+  holidays-seed:
+    build:
+      context: ../api-holidays
+      dockerfile: Dockerfile
+    container_name: platform-holidays
+    env_file: [.env]
+    environment:
+      POS_DB_HOST: postgres
+      POS_DB_PORT: "5432"
+      POS_DB_NAME: "${POS_DB_NAME}"
+      POS_DB_USER: "${POS_DB_USER}"
+      POS_DB_PASSWORD: "${POS_DB_PASSWORD}"
+      API_URL: "https://nagerholidays.com/api/v4/Holidays"
+      YEARS: "${HOLIDAYS_YEARS:-2025,2026}"
+      COUNTRY_CODES: "${COUNTRY_CODES:-CO,PE,EC,BO,CL}"
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: "no"
+
   inventory-api:
     build:
       context: ../Inventory_Api
