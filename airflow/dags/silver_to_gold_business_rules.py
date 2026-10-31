@@ -108,7 +108,6 @@ def calculate_stockout_risk(**context):
     print(f"[RN-04] Evaluated stockout risk for {inserted} products (threshold: {threshold_days} days)")
     return threshold_days
 
-
 def publish_stockout_alerts(**context):
     """
     Publishes stockout risk alerts to the durable operational RabbitMQ route.
@@ -151,7 +150,6 @@ def publish_stockout_alerts(**context):
     print(f"[RN-04] Published {len(messages)} persistent alerts to {STOCKOUT_QUEUE}")
     return len(risks)
 
-
 def calculate_inventory_accuracy(**context):
     """
     RN-09: Seller inventory accuracy: percentage of orders that were not cancelled
@@ -188,7 +186,6 @@ def calculate_inventory_accuracy(**context):
     conn.close()
     print(f"[RN-09] Calculated inventory accuracy for {inserted} sellers")
     return inserted
-
 
 with DAG(
     dag_id="silver_to_gold_business_rules",

@@ -47,7 +47,6 @@ default_args = {
 BUCKET = os.getenv("S3_DATA_LAKE_BUCKET_NAME", "mercaandes-data-lake")
 SPARK_MASTER = os.getenv("SPARK_MASTER_URL", "spark://spark-master:7077")
 
-
 def deduplicate_and_handle_late_events(**context):
     """
     RN-10: Duplicate events are discarded; late events (up to 72 hours) are incorporated
@@ -88,7 +87,6 @@ def deduplicate_and_handle_late_events(**context):
     print(f"[RN-10] Removed {duplicates_removed} duplicates, incorporated {late_incorporated} late events")
     return {"duplicates_removed": duplicates_removed, "late_incorporated": late_incorporated}
 
-
 def anonymize_personal_data(**context):
     """
     RN-11: Customer personal data (name, document, email) cannot reach the analytics
@@ -117,7 +115,6 @@ def anonymize_personal_data(**context):
     print(f"[RN-11] Anonymized {anonymized} customer records")
     return anonymized
 
-
 def verify_silver_layer_quality(**context):
     """Data Quality Check: Confirms that Bronze data was properly processed before closing."""
     ti = context["ti"]
@@ -125,7 +122,6 @@ def verify_silver_layer_quality(**context):
     rn11_result = ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_11_anonymize_personal_data")
     print(f"[DATA QUALITY] Pipeline Bronze -> Silver finalizado exitosamente. Métricas: RN-10={rn10_result}, RN-11={rn11_result}")
     return True
-
 
 def publish_duplicate_data_alert(**context):
     """Publish a data-quality alert when RN-10 removes duplicate events."""
@@ -150,7 +146,6 @@ def publish_duplicate_data_alert(**context):
     publish_message(DATA_QUALITY_QUEUE, message)
     print(f"[DATA QUALITY] Published alert for {duplicates_removed} duplicate events.")
     return duplicates_removed
-
 
 with DAG(
     dag_id="bronze_to_silver_cleaning",

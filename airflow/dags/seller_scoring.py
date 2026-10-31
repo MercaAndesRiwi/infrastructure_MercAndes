@@ -37,7 +37,6 @@ default_args = {
     "execution_timeout": timedelta(minutes=30),
 }
 
-
 def validate_scoring_prerequisites(**context):
     """Verifies that source metrics (orders, reviews) exist before evaluating scores."""
     pg_hook = PostgresHook(postgres_conn_id="pos_db")
@@ -52,7 +51,6 @@ def validate_scoring_prerequisites(**context):
 
     print(f"[PRE-CHECK] Vendedores registrados en la plataforma: {total_sellers}")
     return total_sellers
-
 
 def calculate_seller_score(**context):
     """
@@ -125,7 +123,6 @@ def calculate_seller_score(**context):
     print(f"[RN-07] Calculated scores for {inserted} sellers")
     return inserted
 
-
 def update_seller_status(**context):
     """
     RN-08: Seller with score < 60 for 2 consecutive weeks -> "under observation".
@@ -173,7 +170,6 @@ def update_seller_status(**context):
     conn.close()
     print(f"[RN-08] Updated status for {updated} sellers")
     return updated
-
 
 with DAG(
     dag_id="seller_scoring",

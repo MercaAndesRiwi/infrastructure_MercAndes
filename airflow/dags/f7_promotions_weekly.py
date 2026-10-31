@@ -58,7 +58,6 @@ RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "")
 RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
 QUEUE_SILENT_STORE = os.getenv("RABBITMQ_QUEUE_SILENT_STORE", "mercaandes.alerts.silent-store")
 
-
 def upload_local_f7_to_s3(**context):
     """
     Ingests the weekly promotion file to S3 Bronze.
@@ -99,7 +98,6 @@ def upload_local_f7_to_s3(**context):
 
     context["ti"].xcom_push(key="f7_s3_key", value=s3_key)
     return s3_key
-
 
 def validate_promotion_coverage(**context):
     """
@@ -172,7 +170,6 @@ def validate_promotion_coverage(**context):
     print(f"[RN-05] Accepted {accepted} promotions, rejected {rejected} (coverage < 7 days)")
     return {"accepted": accepted, "rejected": rejected}
 
-
 def publish_silent_store_alert(**context):
     """
     RN-12: A store that does not report sales during 2 hours in business hours
@@ -234,7 +231,6 @@ def publish_silent_store_alert(**context):
 
     print(f"[RN-12] Published {len(silent_stores)} silent store alerts to RabbitMQ queue: {QUEUE_SILENT_STORE}")
     return len(silent_stores)
-
 
 with DAG(
     dag_id="f7_promotions_weekly",
