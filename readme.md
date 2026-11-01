@@ -1,65 +1,176 @@
-# Data Platform — one-command local stack
+# Data Platform — MercaAndes
 
-Postgres + RabbitMQ + Kafka + Spark + Airflow + 3 APIs with a single command.
-Domain logic lives in the sibling `data-processing` repo (mounted read-only
-at `/opt/domain`); this repo owns images, wiring, CI and onboarding evidence.
+Centralized Big Data, Messaging, and Orchestration Platform for **MercaAndes**:
 
-## Quickstart ( single command to execute)
+- **PostgreSQL 16**: Relational and Dimensional POS database (`merca_pos`).
+- **RabbitMQ**: Asynchronous messaging broker and operational event queues.
+- **Apache Kafka & Kafdrop**: Event streaming engine and visual topic monitor.
+- **Apache Spark 3.5**: Distributed batch processing cluster (Master + Worker).
+- **Apache Airflow 3.1.5**: CeleryExecutor pipeline orchestrator with pre-baked dependencies.
+- **FastAPI Microservices**: Marketplace API (Orders/Purchases) and Inventory API.
+- **Notification Worker**: Asynchronous email dispatcher via RabbitMQ and SMTP.
+
+---
+
+## 1. Prerequisites
+
+Before starting, ensure your system has:
+
+- **Docker Desktop** (Docker Compose v2) with WSL2 enabled.
+- **Git** installed.
+- **At least 8 GB of RAM** (16 GB recommended for running all containers simultaneously).
+
+---
+
+## 2. Quickstart: From Clone to Execution
+
+Follow these simple steps to run the complete platform from scratch on any computer:
+
+### Step 1: Clone the Repository
+
+```bash
+git clone URl_Repository
+cd insfractucture_MercAndes
+```
+
+### Step 2: Configure Environment Variables
+
+Initialize your `.env` configuration file from the template:
+
+**Windows (PowerShell):**
 
 ```powershell
 Copy-Item .env.example .env
-# fill every change_me value in .env
+```
+
+**Linux / macOS (Bash):**
+
+```bash
+cp .env.example .env
+```
+
+> **Email Notifications (Optional):**
+> To receive real order confirmation emails in your Gmail inbox, open `.env` and set:
+>
+> ```ini
+> SMTP_HOST=smtp.gmail.com
+> SMTP_PORT=587
+> SMTP_USER=your_email@gmail.com
+> SMTP_PASSWORD=your_google_app_password
+> EMAIL_FROM=your_email@gmail.com
+> ```
+
+### Step 3: Start the Platform with Docker
+
+Build and launch all services in detached mode with a single command:
+
+```bash
 docker compose up -d --build
-.\scripts\smoke.ps1
 ```
 
-First run downloads ~5 GB of images (Airflow alone is ~3 GB) — be patient,
-later runs take seconds. `airflow-init` migrates metadata and creates the
-admin, then exits; apiserver/scheduler wait for it automatically.
+Docker will automatically:
 
-## Dependencies with uv (before the first up)
+1. Build the Airflow image with all required dependencies pre-installed.
+2. Initialize PostgreSQL schemas, currency exchange rates, and public holidays.
+3. Start RabbitMQ and declare operational queues.
+4. Start Apache Kafka and create the required order topics.
+5. Launch the Spark cluster, Airflow orchestrator, and the Marketplace API.
 
-Each service owns its `uv` project. Do this once per service, in order,
-before `docker compose up` (images bake the lock at build time):
+---
 
-```powershell
-cd services/inventory-api
-uv init --name inventory-api --bare
-uv add fastapi uvicorn
+## 3. Real Customer Purchase & Email Dispatch
 
-cd ..\marketplace-api
-uv init --name marketplace-api --bare
-uv add fastapi uvicorn python-dotenv
+You can simulate a real end-to-end customer purchase directly from your web browser:
 
-cd ..\pos-api
-uv init --name pos-api --bare
-uv add fastapi uvicorn sqlalchemy "psycopg[binary]" python-dotenv
-cd ..\..
+1. Open the **Marketplace API Swagger UI** in your browser:
+   👉 **[http://localhost:8003/docs](http://localhost:8003/docs)**
+2. Locate the endpoint:
+   `POST /api/v1/marketplace/purchase`
+3. Click **Try it out**.
+4. The request body is pre-filled with customer details and cart items:
+   ```json
+   {
+     "customer_name": "Luigui Garizado",
+     "customer_email": "your_email@gmail.com",
+     "products": [
+       {
+         "name": "Aceite de Oliva Extra Virgen (500ml)",
+         "quantity": 1,
+         "unit_price": 35000.0
+       },
+       {
+         "name": "Café Molido Especial (500g)",
+         "quantity": 2,
+         "unit_price": 24000.0
+       }
+     ]
+   }
+   ```
+5. Click **Execute**.
+
+### What happens behind the scenes:
+
+- The Marketplace API generates an official Order ID (e.g. `MA-2026-A1B2C`) and returns `201 Created`.
+- The purchase event is published to RabbitMQ (`mercaandes.notifications.purchase`).
+- The **Notification Worker** immediately consumes the event, renders the MercaAndes template, and sends the confirmation email to your inbox.
+
+To monitor notification worker logs in real time:
+
+```bash
+docker logs -f platform-notification-worker
 ```
 
-Rules: `pyproject.toml` = what you need, `uv.lock` = exact versions (commit
-both, never hand-edit versions, never `requirements.txt`). Local run per
-service: `uv run uvicorn app:app`. Docker reinstalls the lock with
-`uv sync --locked --no-dev`. New dependency later? `uv add <pkg>` + rebuild.
+---
 
-## Execution order (domain seeds, from data-processing)
+## 4. Web Dashboards and Service Endpoints
 
-After the stack is `healthy`, with `POS_DB_HOST=localhost`:
+Once the platform is running, access all services via your browser:
 
-`alembic upgrade head` → exchange rates → holidays → promotions →
-`pos_seed.catalog` → `pos_seed.main` → verify with the APIs (`:8001/:8002/:8003`).
 
-## Services
+| Service                 | Web URL                                                  | Credentials / Notes                                  |
+| :------------------------ | :--------------------------------------------------------- | :----------------------------------------------------- |
+| **Marketplace API**     | [http://localhost:8003/docs](http://localhost:8003/docs) | Interactive Swagger UI for purchases and orders (F4) |
+| **Inventory API**       | [http://localhost:8002/docs](http://localhost:8002/docs) | Stock and inventory lookup endpoint (F3)             |
+| **Airflow Web UI**      | [http://localhost:8080](http://localhost:8080)           | User: `airflow` / Password: `airflow`                |
+| **Airflow Flower**      | [http://localhost:5555](http://localhost:5555)           | Celery distributed worker monitor                    |
+| **Spark Master UI**     | [http://localhost:8081](http://localhost:8081)           | Apache Spark cluster status and jobs                 |
+| **RabbitMQ Management** | [http://localhost:15672](http://localhost:15672)         | User: `guest_user` / Password in `.env`              |
+| **Kafka UI (Kafdrop)**  | [http://localhost:9000](http://localhost:9000)           | Kafka topics, partitions, and message browser        |
 
-| service                                   | image                               | endpoint                            |
-| ----------------------------------------- | ----------------------------------- | ----------------------------------- |
-| postgres                                  | postgres:16                         | :5432 (`merca_pos` + `airflow`) |
-| rabbitmq                                  | rabbitmq:3.13-management            | :5672, UI :15672                    |
-| kafka                                     | confluentinc/cp-kafka:7.6.1 (KRaft) | :9092                               |
-| spark-master/worker                       | apache/spark:3.5.1                  | UI :8081                            |
-| airflow-apiserver/scheduler               | apache/airflow:3.1.5                | UI :8080                            |
-| pos-api / inventory-api / marketplace-api | custom uv multi-stage               | :8001/:8002/:8003`/health`        |
+---
 
-All config comes from `.env` (see `.env.example`) — no hardcoded credentials.
-`docs/docker-images.md` records builder-vs-runtime sizes. CI lints, validates
-compose, rebuilds, smokes and pushes on main.
+## 5. Airflow DAG Orchestration Pipeline
+
+Access the Airflow UI at `http://localhost:8080` to orchestrate data lake transformations in sequence:
+
+```
+[1. f1_kaggle_historical_load]     (@once  - Initial historical ingestion to S3 Bronze)
+              │
+              ▼
+[2. bronze_to_silver_cleaning]     (@daily - Anonymization, deduplication & Silver tables)
+              │
+              ▼
+[3. silver_to_gold_business_rules] (@daily - Parallel execution: Stockout risk & Seller accuracy)
+              │
+              ▼
+[4. seller_scoring]                (@weekly - Seller performance scoring 0-100)
+              │
+              ▼
+[5. f7_promotions_weekly]          (@weekly - Weekly promotions ingestion & silent store alerts)
+```
+
+---
+
+## 6. Stopping the Platform
+
+To stop all running containers cleanly:
+
+```bash
+docker compose down
+```
+
+To stop containers and delete persisted volumes (clean slate):
+
+```bash
+docker compose down -v
+```

@@ -1,0 +1,10 @@
+[project]
+name = "notification-worker"
+version = "0.1.0"
+description = "Purchase notification worker for MercaAndes"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pika>=1.3.2",
+    "python-dotenv>=1.0.0",
+]
