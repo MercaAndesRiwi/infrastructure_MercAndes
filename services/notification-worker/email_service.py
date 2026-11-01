@@ -8,7 +8,23 @@ from __future__ import annotations
 import os
 import smtplib
 from email.message import EmailMessage
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+# Load environment variables strictly from .env if present
+try:
+    from dotenv import load_dotenv
+    cur = Path(__file__).resolve().parent
+    for _ in range(4):
+        candidate = cur / ".env"
+        if candidate.exists():
+            load_dotenv(dotenv_path=candidate)
+            break
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+except Exception:
+    pass
 
 
 def format_currency_cop(amount: float | int) -> str:
@@ -69,12 +85,15 @@ def send_email(
     If SMTP_HOST is not configured, runs in resilient Mock/Dry-run mode,
     logging the message to console without raising an exception.
     """
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
-    smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER", "").strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", "").strip()
-    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
-    sender = from_email or os.getenv("EMAIL_FROM", "atencion@mercaandes.com")
+    # Strictly read SMTP settings from environment variables without hardcoded defaults
+    smtp_host = (os.environ.get("SMTP_HOST") or "").strip()
+    smtp_port_raw = os.environ.get("SMTP_PORT")
+    smtp_port = int(smtp_port_raw) if smtp_port_raw else 587
+    smtp_user = (os.environ.get("SMTP_USER") or "").strip()
+    smtp_password = (os.environ.get("SMTP_PASSWORD") or "").strip()
+    smtp_use_tls_raw = os.environ.get("SMTP_USE_TLS")
+    use_tls = smtp_use_tls_raw.lower() in ("true", "1", "yes") if smtp_use_tls_raw else False
+    sender = from_email or os.environ.get("EMAIL_FROM")
 
     # Safe Fallback / Dry-Run (Local Development or AWS before SES credentials)
     if not smtp_host:

@@ -10,17 +10,50 @@ import os
 import signal
 import sys
 import time
+from pathlib import Path
 
 import pika
 
+# Load environment variables strictly from .env if present
+try:
+    from dotenv import load_dotenv
+    cur = Path(__file__).resolve().parent
+    for _ in range(4):
+        candidate = cur / ".env"
+        if candidate.exists():
+            load_dotenv(dotenv_path=candidate)
+            break
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+except Exception:
+    pass
+
 from email_service import format_purchase_email, send_email
 
-RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
-RABBITMQ_PORT = int(os.getenv("RABBITMQ_PORT", "5672"))
-RABBITMQ_USER = os.getenv("RABBITMQ_USER", os.getenv("RABBITMQ_USERNAME", "guest_user"))
-RABBITMQ_PASSWORD = os.getenv("RABBITMQ_PASSWORD", "")
-RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
-QUEUE_NAME = os.getenv("RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS", "mercaandes.notifications.purchase")
+# Strictly read environment variables without fallback defaults
+RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST")
+RABBITMQ_PORT_RAW = os.environ.get("RABBITMQ_PORT")
+RABBITMQ_PORT = int(RABBITMQ_PORT_RAW) if RABBITMQ_PORT_RAW else None
+RABBITMQ_USER = os.environ.get("RABBITMQ_USER")
+RABBITMQ_PASSWORD = os.environ.get("RABBITMQ_PASSWORD")
+RABBITMQ_VHOST = os.environ.get("RABBITMQ_VHOST")
+QUEUE_NAME = os.environ.get("RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS")
+
+missing_rabbit = [name for name, val in [
+    ("RABBITMQ_HOST", RABBITMQ_HOST),
+    ("RABBITMQ_PORT", RABBITMQ_PORT),
+    ("RABBITMQ_USER", RABBITMQ_USER),
+    ("RABBITMQ_PASSWORD", RABBITMQ_PASSWORD),
+    ("RABBITMQ_VHOST", RABBITMQ_VHOST),
+    ("RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS", QUEUE_NAME),
+] if not val]
+
+if missing_rabbit:
+    raise EnvironmentError(
+        f"Missing required RabbitMQ environment variables: {', '.join(missing_rabbit)}. "
+        "Strictly reading from environment variables without defaults."
+    )
 
 _RUNNING = True
 

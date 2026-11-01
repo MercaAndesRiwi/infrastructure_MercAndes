@@ -152,7 +152,7 @@ with DAG(
             "spark.executor.cores": "1",
             "spark.executor.memory": "1G",
         },
-        env={"S3_BUCKET": BUCKET},
+        env_vars={"S3_BUCKET": BUCKET},
         doc_md="Inicializa las tablas Silver con el histórico de ventas F1 usando los 2 workers de Spark.",
     )
 

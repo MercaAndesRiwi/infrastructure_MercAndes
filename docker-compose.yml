@@ -92,7 +92,7 @@ services:
   spark-master:
     image: apache/spark:3.5.1
     container_name: platform-spark-master
-    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master
+    command: /opt/spark/bin/spark-class org.apache.spark.deploy.master.Master -h 0.0.0.0 --webui-port 8080
     ports: ["${SPARK_MASTER_UI_PORT:-8081}:8080", "7077:7077"]
     volumes:
       - spark-work:/opt/spark/work
@@ -416,9 +416,15 @@ services:
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "8000"
       MASTER_SEED: "${MASTER_SEED:-42}"
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
+      RABBITMQ_USER: "${RABBITMQ_USER}"
+      RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
+      RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
+      RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS: "${RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS:-mercaandes.notifications.purchase}"
     ports: ["${MARKETPLACE_API_PORT:-8003}:8000"]
     depends_on:
-      kafka: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
     restart: unless-stopped
 
   f7-weekly-promotions:

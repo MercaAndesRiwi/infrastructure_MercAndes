@@ -20,23 +20,42 @@ import os
 import random
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import List
 
 import numpy as np
 import pandas as pd
-import kagglehub
 from sqlalchemy import create_engine, text
 
+# Load environment variables strictly from .env if present
+try:
+    from dotenv import load_dotenv
+    cur = Path(__file__).resolve().parent
+    for _ in range(4):
+        candidate = cur / ".env"
+        if candidate.exists():
+            load_dotenv(dotenv_path=candidate)
+            break
+        if cur.parent == cur:
+            break
+        cur = cur.parent
+except Exception:
+    pass
+
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration (Strictly read from environment variables without defaults)
 # ---------------------------------------------------------------------------
-SEED = int(os.getenv("MASTER_SEED", "42"))
-DEFECT_RATE = float(os.getenv("F1_DEFECT_RATE", "0.05"))  # 5% default
-DB_HOST = os.getenv("POS_DB_HOST", "localhost")
-DB_PORT = os.getenv("POS_DB_PORT", "5432")
-DB_NAME = os.getenv("POS_DB_NAME", "merca_pos")
-DB_USER = os.getenv("POS_DB_USER", "merca")
-DB_PASSWORD = os.getenv("POS_DB_PASSWORD", "change_me")
+DEFAULT_INPUT_DIR = os.environ.get(
+    "F1_KAGGLE_LOCAL_INPUT_PATH",
+    os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "..", "inputs", "f1_kaggle")),
+)
+SEED = int(os.environ.get("MASTER_SEED", "42"))
+DEFECT_RATE = float(os.environ.get("F1_DEFECT_RATE", "0.05"))
+DB_HOST = os.environ.get("POS_DB_HOST")
+DB_PORT = os.environ.get("POS_DB_PORT")
+DB_NAME = os.environ.get("POS_DB_NAME")
+DB_USER = os.environ.get("POS_DB_USER")
+DB_PASSWORD = os.environ.get("POS_DB_PASSWORD")
 
 random.seed(SEED)
 np.random.seed(SEED)
@@ -56,13 +75,21 @@ LOAD_ORDER: List[str] = [
 # CSV file → MercaAndes table name mapping
 FILE_TO_TABLE = {
     "customers.csv": "customers",
+    "olist_customers_dataset.csv": "customers",
     "sellers.csv": "sellers",
+    "olist_sellers_dataset.csv": "sellers",
     "products.csv": "products",
+    "olist_products_dataset.csv": "products",
     "geolocation.csv": "geolocation",
+    "olist_geolocation_dataset.csv": "geolocation",
     "orders.csv": "orders",
+    "olist_orders_dataset.csv": "orders",
     "order_items.csv": "order_items",
+    "olist_order_items_dataset.csv": "order_items",
     "order_payments.csv": "order_payments",
+    "olist_order_payments_dataset.csv": "order_payments",
     "order_reviews.csv": "order_reviews",
+    "olist_order_reviews_dataset.csv": "order_reviews",
     "product_category_name_translation.csv": "product_category_translation",
 }
 
@@ -141,6 +168,21 @@ PAYMENT_METHOD_MAP = {
 
 
 def get_engine():
+    """Create SQLAlchemy engine strictly using database environment variables without defaults."""
+    missing = [name for name, val in [
+        ("POS_DB_HOST", DB_HOST),
+        ("POS_DB_PORT", DB_PORT),
+        ("POS_DB_NAME", DB_NAME),
+        ("POS_DB_USER", DB_USER),
+        ("POS_DB_PASSWORD", DB_PASSWORD),
+    ] if not val]
+
+    if missing:
+        raise EnvironmentError(
+            f"Missing required database environment variables: {', '.join(missing)}. "
+            "Variables must be defined strictly in the environment without defaults."
+        )
+
     url = (
         f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}"
         f"@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -208,43 +250,80 @@ def normalize_dataframe(df: pd.DataFrame, table: str) -> pd.DataFrame:
 
 
 def load_table(engine, table: str, df: pd.DataFrame) -> int:
-    """Load a DataFrame to PostgreSQL idempotently (ON CONFLICT DO NOTHING)."""
+    """Load a DataFrame to PostgreSQL using a staging anti-join pattern.
+
+    1. Normalizes columns and applies controlled quality defects in staging memory.
+    2. Inspects existing primary keys in destination PostgreSQL table.
+    3. Performs left anti-join to isolate strictly new records (zero overwrite).
+    4. Batch inserts only new delta records.
+    """
     if df.empty:
         return 0
 
     df = normalize_dataframe(df, table)
     df = inject_defects(df, table)
 
-    # Determine PK column for ON CONFLICT (assume first column as id)
+    # Primary key column (first column in normalized dataframe)
     pk_column = df.columns[0]
 
-    # Build INSERT ... ON CONFLICT DO NOTHING
-    columns = ", ".join(df.columns)
-    placeholders = ", ".join([f":{c}" for c in df.columns])
-    conflict_col = pk_column
+    # Step 1: Query existing keys from target table
+    existing_keys = set()
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text(f"SELECT {pk_column} FROM {table}"))
+            existing_keys = {row[0] for row in result.fetchall() if row[0] is not None}
+    except Exception:
+        # Table might be uninitialized or empty
+        existing_keys = set()
 
+    # Step 2: Left anti-join: filter out records that already exist in database
+    new_df = df[~df[pk_column].isin(existing_keys)]
+    if new_df.empty:
+        print(f"[F1 Seed Staging] {table}: all {len(df)} records already exist in database. 0 rows inserted.")
+        return 0
+
+    # Step 3: Batch insert strictly new records without overwriting
+    columns = ", ".join(new_df.columns)
+    placeholders = ", ".join([f":{c}" for c in new_df.columns])
     sql = text(
         f"INSERT INTO {table} ({columns}) VALUES ({placeholders}) "
-        f"ON CONFLICT ({conflict_col}) DO NOTHING"
+        f"ON CONFLICT ({pk_column}) DO NOTHING"
     )
 
     inserted = 0
     with engine.begin() as conn:
-        for _, row in df.iterrows():
-            params = {c: (None if pd.isna(v) else v) for c, v in row.items()}
-            result = conn.execute(sql, params)
-            inserted += result.rowcount
+        records = [
+            {c: (None if pd.isna(v) else v) for c, v in row.items()}
+            for _, row in new_df.iterrows()
+        ]
+        result = conn.execute(sql, records)
+        inserted = result.rowcount if result.rowcount > 0 else len(records)
 
+    print(
+        f"[F1 Seed Staging] {table}: {len(df)} total in source, "
+        f"{len(existing_keys)} already in DB, {inserted} new records inserted."
+    )
     return inserted
 
 
-def main(mode: str = "full"):
+def main(mode: str = "full", input_dir: str | None = None):
     print(f"[F1 Seed] Starting Kaggle Olist load (mode={mode}, seed={SEED})")
 
-    # 1. Download dataset with kagglehub
-    print("[F1 Seed] Downloading dataset from Kaggle...")
-    path = kagglehub.dataset_download("olistbr/brazilian-ecommerce")
-    print(f"[F1 Seed] Local path: {path}")
+    # 1. Resolve input directory (prioritize local inputs/f1_kaggle)
+    path = input_dir or DEFAULT_INPUT_DIR
+    if os.path.exists(path) and any(f.endswith(".csv") for f in os.listdir(path)):
+        print(f"[F1 Seed] Using local input directory: {path}")
+    else:
+        # Fallback to kagglehub if local directory is missing
+        print(f"[F1 Seed] Local path '{path}' not found. Attempting download from Kaggle...")
+        try:
+            import kagglehub
+            path = kagglehub.dataset_download("olistbr/brazilian-ecommerce")
+            print(f"[F1 Seed] Downloaded to: {path}")
+        except Exception as exc:
+            raise FileNotFoundError(
+                f"Input directory '{path}' not found and Kaggle download failed: {exc}"
+            ) from exc
 
     # 2. List available CSV files
     csv_files = [f for f in os.listdir(path) if f.endswith(".csv")]
@@ -286,5 +365,10 @@ if __name__ == "__main__":
         default="full",
         help="Load volume: dev (small sample) or full (all data)",
     )
+    parser.add_argument(
+        "--input-dir",
+        default=DEFAULT_INPUT_DIR,
+        help="Path to directory containing Olist CSV files (defaults to inputs/f1_kaggle)",
+    )
     args = parser.parse_args()
-    main(args.mode)
+    main(mode=args.mode, input_dir=args.input_dir)

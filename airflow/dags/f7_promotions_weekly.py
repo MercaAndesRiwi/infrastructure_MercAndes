@@ -17,13 +17,9 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-import boto3
-import pandas as pd
-import pika
-from airflow import DAG
 import pendulum
+from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.task_group import TaskGroup
 
 try:
@@ -65,6 +61,8 @@ def upload_local_f7_to_s3(**context):
     - If local file exists, uploads to s3://{BUCKET}/bronze/f7_promotions/{ds}/
     - If running in ECS worker without local volume, checks if S3 already has the file.
     """
+    import boto3
+
     execution_date = context["ds"]
     s3 = boto3.client("s3")
     base = Path(F7_LOCAL_INPUT_PATH)
@@ -105,6 +103,10 @@ def validate_promotion_coverage(**context):
     is less than 7 days.
     Connects to Postgres (RDS): merca_pos.
     """
+    import boto3
+    import pandas as pd
+    from airflow.providers.postgres.hooks.postgres import PostgresHook
+
     s3_key = context["ti"].xcom_pull(task_ids="promotions_ingestion_and_validation.upload_f7_to_s3", key="f7_s3_key")
 
     s3 = boto3.client("s3")
@@ -176,6 +178,9 @@ def publish_silent_store_alert(**context):
     (08:00 - 20:00) generates an operational alert.
     Publish to RabbitMQ queue: mercaandes.alerts.silent-store
     """
+    import pika
+    from airflow.providers.postgres.hooks.postgres import PostgresHook
+
     pg_hook = PostgresHook(postgres_conn_id="pos_db")
     conn = pg_hook.get_conn()
     cur = conn.cursor()
