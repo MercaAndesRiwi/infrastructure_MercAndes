@@ -1,206 +1,176 @@
 # Data Platform — MercaAndes
 
-Centralized data and orchestration platform for MercaAndes: **PostgreSQL (RDS), RabbitMQ, Kafka, Apache Spark (1 Master + 2 Workers), Apache Airflow (CeleryExecutor), API Microservices, and Alert/Notification Workers**.
+Centralized Big Data, Messaging, and Orchestration Platform for **MercaAndes**:
+
+- **PostgreSQL 16**: Relational and Dimensional POS database (`merca_pos`).
+- **RabbitMQ**: Asynchronous messaging broker and operational event queues.
+- **Apache Kafka & Kafdrop**: Event streaming engine and visual topic monitor.
+- **Apache Spark 3.5**: Distributed batch processing cluster (Master + Worker).
+- **Apache Airflow 3.1.5**: CeleryExecutor pipeline orchestrator with pre-baked dependencies.
+- **FastAPI Microservices**: Marketplace API (Orders/Purchases) and Inventory API.
+- **Notification Worker**: Asynchronous email dispatcher via RabbitMQ and SMTP.
 
 ---
 
 ## 1. Prerequisites
 
-- **Docker Desktop** (Docker Compose v2) with at least **8 GB RAM** allocated.
-- **PowerShell** (Windows) or **Bash** (Linux/macOS).
-- **Python 3.12+** installed.
-- **Git** configured with access to the MercaAndesRiwi organization.
+Before starting, ensure your system has:
+
+- **Docker Desktop** (Docker Compose v2) with WSL2 enabled.
+- **Git** installed.
+- **At least 8 GB of RAM** (16 GB recommended for running all containers simultaneously).
 
 ---
 
-## 2. Step-by-Step Local Execution
+## 2. Quickstart: From Clone to Execution
 
-This platform orchestrates and integrates the 7 repositories of the **MercaAndes** ecosystem:
+Follow these simple steps to run the complete platform from scratch on any computer:
 
-1. `infrastructure_MercAndes` (`data-platform`): Central orchestrator (this repository).
-2. `Transactional-POS-database`: Alembic migrations and transactional POS seeds (`pos-database`).
-3. `Inventory_Api`: Inventory query FastAPI microservice (`inventory-api`, port `8002`).
-4. `Marketplace_Api`: Marketplace order events FastAPI microservice and Kafka producer (`marketplace-api`, port `8003`).
-5. `MercaAndes_Spark_Gold_Transformations`: PySpark transformations mounted into the Spark cluster.
-6. `api-exchange-rates`: Batch ingestion of currency exchange rates into PostgreSQL (`exchange-rates-seed`).
-7. `api-holidays`: Batch ingestion of public holidays into PostgreSQL (`holidays-seed`).
-
----
-
-### Step 2.1: Automatic Workspace Bootstrap and Environment Variables
-
-To ensure seamless compatibility across any machine (creates the `.env` file and clones/validates sister repositories):
-
-**On Windows (PowerShell):**
-
-```powershell
-.\scripts\bootstrap-workspace.ps1
-```
-
-**On Linux / macOS (Bash):**
+### Step 1: Clone the Repository
 
 ```bash
-./scripts/bootstrap-workspace.sh
+git clone URl_Repository
+cd insfractucture_MercAndes
 ```
 
-> **Note:** If you prefer configuring `.env` manually:
->
-> ```powershell
-> Copy-Item .env.example .env
-> ```
->
-> Edit the `.env` file accordingly (AWS S3, credentials, and SMTP).
+### Step 2: Configure Environment Variables
 
----
+Initialize your `.env` configuration file from the template:
 
-### Step 2.2: Build and Start Containers
-
-From the root of `data-platform`:
+**Windows (PowerShell):**
 
 ```powershell
+Copy-Item .env.example .env
+```
+
+**Linux / macOS (Bash):**
+
+```bash
+cp .env.example .env
+```
+
+> **Email Notifications (Optional):**
+> To receive real order confirmation emails in your Gmail inbox, open `.env` and set:
+>
+> ```ini
+> SMTP_HOST=smtp.gmail.com
+> SMTP_PORT=587
+> SMTP_USER=your_email@gmail.com
+> SMTP_PASSWORD=your_google_app_password
+> EMAIL_FROM=your_email@gmail.com
+> ```
+
+### Step 3: Start the Platform with Docker
+
+Build and launch all services in detached mode with a single command:
+
+```bash
 docker compose up -d --build
 ```
 
+Docker will automatically:
+
+1. Build the Airflow image with all required dependencies pre-installed.
+2. Initialize PostgreSQL schemas, currency exchange rates, and public holidays.
+3. Start RabbitMQ and declare operational queues.
+4. Start Apache Kafka and create the required order topics.
+5. Launch the Spark cluster, Airflow orchestrator, and the Marketplace API.
+
 ---
 
-### Step 2.3: Verify Service Health
+## 3. Real Customer Purchase & Email Dispatch
 
-Once services are running, execute the quick smoke test script:
+You can simulate a real end-to-end customer purchase directly from your web browser:
 
-```powershell
-.\scripts\smoke.ps1
+1. Open the **Marketplace API Swagger UI** in your browser:
+   👉 **[http://localhost:8003/docs](http://localhost:8003/docs)**
+2. Locate the endpoint:
+   `POST /api/v1/marketplace/purchase`
+3. Click **Try it out**.
+4. The request body is pre-filled with customer details and cart items:
+   ```json
+   {
+     "customer_name": "Luigui Garizado",
+     "customer_email": "your_email@gmail.com",
+     "products": [
+       {
+         "name": "Aceite de Oliva Extra Virgen (500ml)",
+         "quantity": 1,
+         "unit_price": 35000.0
+       },
+       {
+         "name": "Café Molido Especial (500g)",
+         "quantity": 2,
+         "unit_price": 24000.0
+       }
+     ]
+   }
+   ```
+5. Click **Execute**.
+
+### What happens behind the scenes:
+
+- The Marketplace API generates an official Order ID (e.g. `MA-2026-A1B2C`) and returns `201 Created`.
+- The purchase event is published to RabbitMQ (`mercaandes.notifications.purchase`).
+- The **Notification Worker** immediately consumes the event, renders the MercaAndes template, and sends the confirmation email to your inbox.
+
+To monitor notification worker logs in real time:
+
+```bash
+docker logs -f platform-notification-worker
 ```
 
-**Ports and Services Matrix:**
+---
+
+## 4. Web Dashboards and Service Endpoints
+
+Once the platform is running, access all services via your browser:
 
 
-| Service                       | URL / Port                     | Role / Function                                                     |
-| :------------------------------ | :------------------------------- | :-------------------------------------------------------------------- |
-| **inventory-api**             | `http://localhost:8002/`       | Deterministic stock and inventory lookup (F3)                       |
-| **marketplace-api**           | `http://localhost:8003/`       | Marketplace order events and Kafka producer (F4)                    |
-| **f7-weekly-promotions**      | `http://localhost:8004/health` | Weekly promotions ingestion to S3/Kafka/RabbitMQ (F7)               |
-| **reports-api**               | `http://localhost:8005/health` | Enqueues operational report requests (US-03)                        |
-| **pos-database**              | Batch Task (`restart: no`)     | Alembic migrations + POS sales and customer seeding (F2)            |
-| **exchange-rates-seed**       | Batch Task (`restart: no`)     | Daily currency exchange rates ingestion from Frankfurter API        |
-| **holidays-seed**             | Batch Task (`restart: no`)     | Public holidays ingestion from Nager.Date API for stockout rules    |
-| **notification-worker**       | Background Worker              | RabbitMQ consumer and transactional email dispatcher                |
-| **operational-alerts-worker** | Background Worker              | Stockout and data quality alert consumer (US-03)                    |
-| **reports-worker**            | Background Worker              | Asynchronous risk report generator (US-03)                          |
-| **Airflow UI**                | `http://localhost:8080`        | CeleryExecutor orchestrator (User: `airflow` / Password: `airflow`) |
-| **Airflow Workers**           | 2 Background Workers           | Worker 1 and Worker 2 executing DAG tasks in parallel               |
-| **Airflow Flower**            | `http://localhost:5555`        | Celery workers and task queues visual monitor                       |
-| **Spark Master UI**           | `http://localhost:8081`        | Spark Cluster (Master + 2 Workers on `:7077`)                       |
-| **RabbitMQ Mgmt**             | `http://localhost:15672`       | Message broker (User: `guest_user` / Password in `.env`)            |
-| **Kafka UI (Kafdrop)**        | `http://localhost:9000`        | Kafka topics and partitions monitor (`:9092`)                       |
+| Service                 | Web URL                                                  | Credentials / Notes                                  |
+| :------------------------ | :--------------------------------------------------------- | :----------------------------------------------------- |
+| **Marketplace API**     | [http://localhost:8003/docs](http://localhost:8003/docs) | Interactive Swagger UI for purchases and orders (F4) |
+| **Inventory API**       | [http://localhost:8002/docs](http://localhost:8002/docs) | Stock and inventory lookup endpoint (F3)             |
+| **Airflow Web UI**      | [http://localhost:8080](http://localhost:8080)           | User: `airflow` / Password: `airflow`                |
+| **Airflow Flower**      | [http://localhost:5555](http://localhost:5555)           | Celery distributed worker monitor                    |
+| **Spark Master UI**     | [http://localhost:8081](http://localhost:8081)           | Apache Spark cluster status and jobs                 |
+| **RabbitMQ Management** | [http://localhost:15672](http://localhost:15672)         | User: `guest_user` / Password in `.env`              |
+| **Kafka UI (Kafdrop)**  | [http://localhost:9000](http://localhost:9000)           | Kafka topics, partitions, and message browser        |
 
 ---
 
-### Step 2.4: Stop the Platform
+## 5. Airflow DAG Orchestration Pipeline
 
-```powershell
+Access the Airflow UI at `http://localhost:8080` to orchestrate data lake transformations in sequence:
+
+```
+[1. f1_kaggle_historical_load]     (@once  - Initial historical ingestion to S3 Bronze)
+              │
+              ▼
+[2. bronze_to_silver_cleaning]     (@daily - Anonymization, deduplication & Silver tables)
+              │
+              ▼
+[3. silver_to_gold_business_rules] (@daily - Parallel execution: Stockout risk & Seller accuracy)
+              │
+              ▼
+[4. seller_scoring]                (@weekly - Seller performance scoring 0-100)
+              │
+              ▼
+[5. f7_promotions_weekly]          (@weekly - Weekly promotions ingestion & silent store alerts)
+```
+
+---
+
+## 6. Stopping the Platform
+
+To stop all running containers cleanly:
+
+```bash
 docker compose down
 ```
 
----
+To stop containers and delete persisted volumes (clean slate):
 
-## 3. Purchase Simulation and Email Notifications
-
-The purchase workflow generates the corporate confirmation message and dispatches it via SMTP/SES or through the RabbitMQ asynchronous worker (`mercaandes.notifications.purchase`).
-
-### Execution Options:
-
-```powershell
-# Option A: Fetch a real order directly from PostgreSQL (merca_pos):
-python scripts/simulate_purchase.py --from-db --email "my-email@gmail.com"
-python scripts/simulate_purchase.py --from-db --order-id "<ORDER_ID>" --email "my-email@gmail.com"
-
-# Option B: Pass dynamic custom products via JSON file or CLI JSON string:
-python scripts/simulate_purchase.py --customer "Carlos Gomez" --email "carlos@gmail.com" --products scripts/sample_order.json
-python scripts/simulate_purchase.py --customer "Carlos Gomez" --email "carlos@gmail.com" --products '[{"name":"Arroz Diana 1kg","qty":2,"unit_price":4500},{"name":"Leche 1L","qty":1,"unit_price":4200}]'
-
-# Option C: Standard default simulation:
-python scripts/simulate_purchase.py --customer "Carlos Mendoza" --email "customer@mercaandes.com" --order-id "MA-2026-89412"
-
-# Restart notification worker after updating SMTP settings in .env:
-docker compose restart notification-worker
+```bash
+docker compose down -v
 ```
-
-**Generated Notification Message:**
-
-```text
-¡Hola, [Customer Name]! 
-
-¡Buenas noticias! Tu pedido ha sido procesado con éxito.
-
-Conoce los detalles de tu compra:
-- Empresa: MercaAndes
-- N° de Pedido: MA-2026-89412
-- Estado: Confirmado / En preparación
-- Fecha de Compra: 28-10-2026
-- Productos:
-  * 1x Aceite de Oliva Extra Virgen (500ml) - $35.000
-  * 2x Café Molido Especial (500g) - $48.000
-- Total pagado: $83.000
-
-Puedes realizar el seguimiento de tu envío ingresando a Mis Compras > Detalle de Pedido.
-
-¡Gracias por comprar en MercaAndes!
-Atentamente,
-Equipo de Atención al Cliente | MercaAndes
-```
-
----
-
-## 4. Airflow DAG Orchestration (Strict Order)
-
-Access `http://localhost:8080`. All DAGs feature standardized operational attributes (`retries=3`, `retry_delay=5min`, `execution_timeout=30min`, `max_active_runs=1`).
-
-Execute in the following sequential order:
-
-```
-[1. f1_kaggle_historical_load]  (@once - Initial historical ingestion to S3 Bronze)
-              │
-              ▼
-[2. bronze_to_silver_cleaning]  (@daily - Data Cleaning RN-10/11 -> Spark RN-01/02/03/06)
-              │
-              ▼
-[3. silver_to_gold_business_rules] (@daily - Parallel on 2 workers: RN-04 Stockout + RN-09 Accuracy)
-              │
-              ▼
-[4. seller_scoring]            (@weekly - RN-07 Score -> RN-08 Status)
-              │
-              ▼
-[5. f7_promotions_weekly]      (@weekly - RN-05 S3 Ingestion + RN-12 Silent Store Alerts)
-```
-
-### 5 DAGs Specification:
-
-
-| DAG                                 | Schedule  | Main Tasks / TaskGroups                                                                                                               | Business Rules / Architecture                                                                    |
-| :------------------------------------ | :---------- | :-------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------- |
-| **`f1_kaggle_historical_load`**     | `@once`   | `upload_local_f1_to_s3` $\rightarrow$ `validate_f1_bronze` $\rightarrow$ `spark_f1_bronze_to_silver_init`                             | Olist Kaggle historical load to S3 Bronze and Spark Silver tables init                           |
-| **`bronze_to_silver_cleaning`**     | `@daily`  | `start` $\rightarrow$ `TaskGroup(bronze_cleaning)` $\rightarrow$ `TaskGroup(spark_silver)` $\rightarrow$ `verify` $\rightarrow$ `end` | RN-10 (Deduplication), RN-11 (MD5 PII Anonymization), RN-01/02/06 (Net Sales), RN-03 (Inventory) |
-| **`silver_to_gold_business_rules`** | `@daily`  | `start` $\rightarrow$ [`TaskGroup(stockout_risk)` \|\| `TaskGroup(seller_accuracy)`] $\rightarrow$ `end`                              | RN-04 (Stockout risk & RabbitMQ alerts), RN-09 (Seller inventory accuracy)                       |
-| **`seller_scoring`**                | `@weekly` | `start` $\rightarrow$ `validate_prerequisites` $\rightarrow$ `TaskGroup(seller_evaluation)` $\rightarrow$ `end`                       | RN-07 (Score 0-100), RN-08 (Observation / Suspended Status)                                      |
-| **`f7_promotions_weekly`**          | `@weekly` | `start` $\rightarrow$ [`TaskGroup(promotions_ingestion)` \|\| `TaskGroup(store_monitoring)`] $\rightarrow$ `end`                      | RN-05 (Coverage validation $\ge$ 7 days), RN-12 (RabbitMQ silent store alerts)                   |
-
----
-
-## 5. Explicit Resource Names
-
-
-| Resource                           | Exact System Name                     | Usage                                         |
-| :----------------------------------- | :-------------------------------------- | :---------------------------------------------- |
-| **Kafka Orders Topic**             | `mercaandes.orders.events`            | `marketplace-api`                             |
-| **Kafka Promotions Topic**         | `mercaandes.promotions.weekly`        | `f7-weekly-promotions`                        |
-| **RabbitMQ Purchases Queue**       | `mercaandes.notifications.purchase`   | `simulate_purchase.py`, `notification-worker` |
-| **RabbitMQ Stockout Alerts Queue** | `alertas.riesgo_quiebre`              | `silver_to_gold_business_rules` (RN-04)       |
-| **RabbitMQ Silent Store Queue**    | `mercaandes.alerts.silent-store`      | `f7_promotions_weekly` (RN-12)                |
-| **RabbitMQ F7 Ingestion Queue**    | `mercaandes.promotions.weekly.ingest` | `f7-weekly-promotions`                        |
-| **Relational Database**            | `merca_pos`                           | PostgreSQL / Amazon RDS                       |
-
----
-
-## 6. Operational RabbitMQ Messaging (US-03)
-
-The operational message routes, consumers, retry policy, dead-letter queues, report API, and ten-minute durability procedure are documented in [RabbitMQ operational messaging](docs/rabbitmq-operational-messaging.md).
