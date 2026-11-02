@@ -1,0 +1,64 @@
+{
+  "family": "mercaandes-batch-node",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "EC2"
+  ],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/mercaandes-batch-node-role",
+  "containerDefinitions": [
+    {
+      "name": "airflow-webserver",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/airflow:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "hostPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "AIRFLOW__CORE__EXECUTOR",
+          "value": "CeleryExecutor"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mercaandes-batch-node",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "airflow"
+        }
+      }
+    },
+    {
+      "name": "spark-master",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/spark:latest",
+      "essential": false,
+      "portMappings": [
+        {
+          "containerPort": 7077,
+          "hostPort": 7077,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 8081,
+          "hostPort": 8081,
+          "protocol": "tcp"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mercaandes-batch-node",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "spark"
+        }
+      }
+    }
+  ]
+}
