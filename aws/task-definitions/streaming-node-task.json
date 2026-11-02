@@ -1,0 +1,58 @@
+{
+  "family": "mercaandes-streaming-node",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "EC2"
+  ],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/mercaandes-streaming-node-role",
+  "containerDefinitions": [
+    {
+      "name": "kafka",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/kafka:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 9092,
+          "hostPort": 9092,
+          "protocol": "tcp"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mercaandes-streaming-node",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "kafka"
+        }
+      }
+    },
+    {
+      "name": "rabbitmq",
+      "image": "${AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/rabbitmq:latest",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 5672,
+          "hostPort": 5672,
+          "protocol": "tcp"
+        },
+        {
+          "containerPort": 15672,
+          "hostPort": 15672,
+          "protocol": "tcp"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/mercaandes-streaming-node",
+          "awslogs-region": "us-east-1",
+          "awslogs-stream-prefix": "rabbitmq"
+        }
+      }
+    }
+  ]
+}
