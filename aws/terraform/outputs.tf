@@ -49,3 +49,30 @@ output "rds_security_group_id" {
   description = "ID of the RDS security group (sg-rds)"
   value       = aws_security_group.rds.id
 }
+
+
+# --- EKS PoC Outputs (SCRUM-180) ---
+output "eks_cluster_name" {
+  description = "The name of the EKS cluster for the Sellers API PoC"
+  value       = aws_eks_cluster.poc.name
+}
+
+output "eks_cluster_endpoint" {
+  description = "Endpoint for EKS control plane API server"
+  value       = aws_eks_cluster.poc.endpoint
+}
+
+output "eks_cluster_arn" {
+  description = "ARN of the EKS cluster"
+  value       = aws_eks_cluster.poc.arn
+}
+
+output "eks_cluster_certificate_authority_data" {
+  description = "Base64 encoded certificate data required to communicate with the cluster"
+  value       = aws_eks_cluster.poc.certificate_authority[0].data
+}
+
+output "eks_nodegroup_arn" {
+  description = "ARN of the EKS Managed Node Group"
+  value       = aws_eks_node_group.poc_nodes.arn
+}
