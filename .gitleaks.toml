@@ -1,0 +1,9 @@
+title = "MercaAndes Gitleaks Configuration"
+
+[allowlist]
+description = "Global allowlist for sample input datasets and documentation"
+paths = [
+    '''(?i)inputs/''',
+    '''(?i)seeds/''',
+    '''(?i)\.env\.example$'''
+]
