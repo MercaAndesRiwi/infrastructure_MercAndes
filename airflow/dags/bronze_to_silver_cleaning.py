@@ -13,11 +13,11 @@ Architecture: Optimized for AWS Multi-Worker Cluster (ECS Fargate / EC2 + Spark 
 
 from __future__ import annotations
 
+import json
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from airflow import DAG
-import pendulum
 from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
@@ -34,7 +34,7 @@ except ImportError:
 default_args = {
     "owner": "MercaAndes Data Team",
     "depends_on_past": False,
-    "email": ["data-team@mercaandes.com"],
+    "email": ["yailauc_19@gmail.com"],
     "email_on_failure": True,
     "email_on_retry": False,
     "retries": 3,
@@ -50,13 +50,33 @@ SPARK_MASTER = os.getenv("SPARK_MASTER_URL", "spark://spark-master:7077")
 def deduplicate_and_handle_late_events(**context):
     """
     RN-10: Duplicate events are discarded; late events (up to 72 hours) are incorporated
-    and affected aggregates are recalculated.
+    and affected aggregates are recalculated for the specific partition day.
+    Events > 72 hours are logged as data-quality exceptions and excluded from aggregates.
     Connects to Postgres (RDS): merca_pos (table: marketplace_events).
     """
     pg_hook = PostgresHook(postgres_conn_id="pos_db")
     conn = pg_hook.get_conn()
     cur = conn.cursor()
 
+    # Ensure idempotency: create marketplace_events landing table if not exists
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS public.marketplace_events (
+            id BIGSERIAL PRIMARY KEY,
+            event_id VARCHAR(256),
+            order_id VARCHAR(256),
+            event_type VARCHAR(64),
+            payload JSONB,
+            status VARCHAR(64) DEFAULT 'pending',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            event_timestamp TIMESTAMPTZ NOT NULL,
+            processed BOOLEAN DEFAULT FALSE,
+            processed_at TIMESTAMPTZ
+        );
+        """
+    )
+
+    # 1. Deduplication: discard duplicate events
     cur.execute(
         """
         DELETE FROM marketplace_events me
@@ -70,22 +90,158 @@ def deduplicate_and_handle_late_events(**context):
     )
     duplicates_removed = cur.rowcount
 
+    # 2. Detect affected partitions for late-arriving events (24h <= delay <= 72h, e.g. 48h)
+    cur.execute(
+        """
+        SELECT DISTINCT me.event_timestamp::date
+        FROM marketplace_events me
+        WHERE me.processed = FALSE
+        AND me.event_timestamp >= NOW() - INTERVAL '72 hours'
+        AND me.event_timestamp < NOW() - INTERVAL '24 hours'
+        """
+    )
+    affected_partitions = [str(row[0]) for row in cur.fetchall()]
+
+    # 3. Incorporate valid events (<= 72 hours)
     cur.execute(
         """
         UPDATE marketplace_events me
         SET processed = TRUE,
-            processed_at = NOW()
+            processed_at = NOW(),
+            status = 'processed_incorporated'
         WHERE me.processed = FALSE
         AND me.event_timestamp >= NOW() - INTERVAL '72 hours'
         """
     )
     late_incorporated = cur.rowcount
 
+    # 4. Handle events exceeding the 72-hour operational limit (> 72 hours late)
+    cur.execute(
+        """
+        SELECT me.id, me.event_id, me.order_id, me.event_timestamp,
+            ROUND(EXTRACT(EPOCH FROM (NOW() - me.event_timestamp)) / 3600.0, 1) AS delay_hours
+        FROM marketplace_events me
+        WHERE me.processed = FALSE
+        AND me.event_timestamp < NOW() - INTERVAL '72 hours'
+        """
+    )
+    exception_rows = cur.fetchall()
+
+    if exception_rows:
+        cur.execute(
+            """
+            UPDATE marketplace_events me
+            SET processed = TRUE,
+                processed_at = NOW(),
+                status = 'exception_exceeded_72h'
+            WHERE me.processed = FALSE
+            AND me.event_timestamp < NOW() - INTERVAL '72 hours'
+            """
+        )
+        for _, event_id, order_id, event_ts, delay in exception_rows:
+            alert_msg = new_message(
+                "DATA_QUALITY_LATE_EVENT_EXCEEDED",
+                {
+                    "source": "marketplace_events",
+                    "issue": "late_event_exceeded_72h",
+                    "event_id": str(event_id),
+                    "order_id": str(order_id),
+                    "event_ts": str(event_ts),
+                    "delay_hours": float(delay) if delay else 72.0,
+                    "max_tolerance_hours": 72.0,
+                    "reason": "Late event exceeded 72-hour operational window; excluded from Gold aggregates.",
+                    "dag_run_id": context.get("run_id", "manual"),
+                },
+            )
+            publish_message(DATA_QUALITY_QUEUE, alert_msg)
+            print(
+                f"[RN-10][EXCEPTION_LATE_EVENT] Event {event_id} (Order: {order_id}) "
+                f"arrived {delay}h late (>72h). Logged as exception and alerted."
+            )
+
     conn.commit()
     cur.close()
     conn.close()
-    print(f"[RN-10] Removed {duplicates_removed} duplicates, incorporated {late_incorporated} late events")
-    return {"duplicates_removed": duplicates_removed, "late_incorporated": late_incorporated}
+
+    print(
+        f"[RN-10] Removed {duplicates_removed} duplicates, incorporated {late_incorporated} events, "
+        f"{len(exception_rows)} exceptions (>72h). Affected partitions: {affected_partitions}"
+    )
+
+    return {
+        "duplicates_removed": duplicates_removed,
+        "late_incorporated": late_incorporated,
+        "exceptions_exceeded_72h": len(exception_rows),
+        "affected_partitions": affected_partitions,
+    }
+
+
+def recalculate_affected_gold_partitions(**context):
+    """
+    AC-1, AC-3, AC-5: Incremental recalculation of Gold aggregates for affected partitions.
+    Touches strictly and only the affected day's partition, preserving all other historical days.
+    """
+    ti = context["ti"]
+    rn10_result = (
+        ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_10_deduplicate_late_events")
+        or {}
+    )
+    affected_partitions = rn10_result.get("affected_partitions", [])
+
+    if not affected_partitions:
+        print("[RN-10] No late events requiring historical partition recalculation.")
+        return 0
+
+    pg_hook = PostgresHook(postgres_conn_id="pos_db")
+    conn = pg_hook.get_conn()
+    cur = conn.cursor()
+
+    recalculated_count = 0
+    for partition_date in affected_partitions:
+        print(
+            f"[RN-10][RECALCULATE] Starting partition recalculation for: {partition_date}. "
+            f"Ensuring only this day's partition is updated."
+        )
+
+        # Ensure target gold table exists
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.gold_daily_sales (
+                order_date DATE PRIMARY KEY,
+                total_orders INTEGER NOT NULL DEFAULT 0,
+                total_net_sales_usd NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
+                recalculated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            );
+            """
+        )
+
+        # Scoped partition recalculation: update/insert exclusively for partition_date
+        cur.execute(
+            """
+            INSERT INTO public.gold_daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
+            SELECT
+                %s::date AS order_date,
+                COUNT(DISTINCT me.order_id) AS total_orders,
+                COALESCE(SUM(CAST(me.payload->>'net_sales_usd' AS NUMERIC)), 0.00) AS total_net_sales_usd,
+                NOW()
+            FROM marketplace_events me
+            WHERE me.event_timestamp::date = %s::date
+            AND me.status <> 'exception_exceeded_72h'
+            ON CONFLICT (order_date) DO UPDATE
+            SET total_orders = EXCLUDED.total_orders,
+                total_net_sales_usd = EXCLUDED.total_net_sales_usd,
+                recalculated_at = NOW();
+            """,
+            (partition_date, partition_date),
+        )
+        recalculated_count += 1
+        print(f"[RN-10][RECALCULATE_COMPLETE] Partition {partition_date} updated in Gold.")
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    return recalculated_count
 
 def anonymize_personal_data(**context):
     """
@@ -116,12 +272,89 @@ def anonymize_personal_data(**context):
     return anonymized
 
 def verify_silver_layer_quality(**context):
-    """Data Quality Check: Confirms that Bronze data was properly processed before closing."""
+    """
+    AC-3 & AC-6: Confirms that Bronze data was properly processed and logs
+    comprehensive quality metrics (duplicates, late arrivals, rejections)
+    by source and load (run_id) into public.data_quality_metrics and CloudWatch.
+    """
     ti = context["ti"]
-    rn10_result = ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_10_deduplicate_late_events")
-    rn11_result = ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_11_anonymize_personal_data")
-    print(f"[DATA QUALITY] Pipeline Bronze -> Silver finalizado exitosamente. Métricas: RN-10={rn10_result}, RN-11={rn11_result}")
-    return True
+    load_id = context.get("run_id", "manual_run")
+    source_system = "marketplace_events"
+
+    rn10_result = (
+        ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_10_deduplicate_late_events")
+        or {}
+    )
+    rn11_result = (
+        ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_11_anonymize_personal_data")
+        or 0
+    )
+
+    duplicates_detected = int(rn10_result.get("duplicates_removed", 0))
+    late_arrivals = int(rn10_result.get("late_incorporated", 0))
+    rejections_72h = int(rn10_result.get("exceptions_exceeded_72h", 0))
+    records_processed = late_arrivals + duplicates_detected + rejections_72h
+
+    quality_status = "PASSED" if rejections_72h == 0 else "COMPLETED_WITH_WARNINGS"
+
+    # Persist into RDS PostgreSQL audit table
+    pg_hook = PostgresHook(postgres_conn_id="pos_db")
+    conn = pg_hook.get_conn()
+    cur = conn.cursor()
+
+    cur.execute(
+        """
+        CREATE TABLE IF NOT EXISTS public.data_quality_metrics (
+            metric_id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            load_id                     VARCHAR(256) NOT NULL,
+            source_system               VARCHAR(64) NOT NULL,
+            records_processed           INTEGER NOT NULL DEFAULT 0,
+            duplicates_detected         INTEGER NOT NULL DEFAULT 0,
+            late_arrivals_incorporated  INTEGER NOT NULL DEFAULT 0,
+            rejections_exceeded_72h     INTEGER NOT NULL DEFAULT 0,
+            quality_status              VARCHAR(32) NOT NULL DEFAULT 'PASSED',
+            details                     JSONB,
+            logged_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
+        """
+    )
+
+    cur.execute(
+        """
+        INSERT INTO public.data_quality_metrics
+            (load_id, source_system, records_processed, duplicates_detected,
+             late_arrivals_incorporated, rejections_exceeded_72h, quality_status, details, logged_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, NOW())
+        """,
+        (
+            load_id,
+            source_system,
+            records_processed,
+            duplicates_detected,
+            late_arrivals,
+            rejections_72h,
+            quality_status,
+            f'{{"customers_anonymized": {rn11_result}, "affected_partitions": {json.dumps(rn10_result.get("affected_partitions", []))}}}',
+        ),
+    )
+    conn.commit()
+    cur.close()
+    conn.close()
+
+    print(
+        f"[DATA QUALITY][AUDIT_METRICS_LOGGED] Load: '{load_id}' | Source: '{source_system}' | "
+        f"Duplicates: {duplicates_detected} | Late Arrivals: {late_arrivals} | "
+        f"Rejections (>72h): {rejections_72h} | Status: {quality_status}"
+    )
+
+    return {
+        "load_id": load_id,
+        "source": source_system,
+        "duplicates": duplicates_detected,
+        "late_arrivals": late_arrivals,
+        "rejections": rejections_72h,
+        "status": quality_status,
+    }
 
 def publish_duplicate_data_alert(**context):
     """Publish a data-quality alert when RN-10 removes duplicate events."""
@@ -151,39 +384,39 @@ with DAG(
     dag_id="bronze_to_silver_cleaning",
     default_args=default_args,
     description="Cleaning, compliance and business rules Bronze -> Silver (RN-01, 02, 03, 06, 10, 11).",
-    schedule="@daily",
-    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
+    schedule="0 10 * * *",
+    start_date=datetime(2026, 11, 5, 10, 0),
     catchup=False,
     max_active_runs=1,
     tags=["layer:silver", "pipeline:bronze-to-silver", "cleaning", "compliance", "mercaandes"],
     doc_md="""
-    # Pipeline Bronze a Silver (MercaAndes)
+    # Bronze to Silver Pipeline (MercaAndes)
     
-    Este DAG ejecuta la limpieza, cumplimiento de datos (PII) y transformaciones hacia la capa Silver.
+    This DAG cleans, anonymizes (PII), and applies transformations to the Silver layer.
     
-    ### Flujo Lógico Medallion:
-    1. **Inicio de Pipeline**: Verificación de conectividad.
+    ### Pipeline Steps:
+    1. **Start Pipeline**: Entry point and connection check.
     2. **TaskGroup: `bronze_cleaning_compliance`**:
-       - `RN-10`: Deduplicación de eventos de marketplace y gestión de eventos tardíos (hasta 72h).
-       - `RN-11`: Anonimización con hash MD5 de datos sensibles de clientes (Nombre, Cédula/Documento, Email).
+       - `RN-10`: Deduplicate events and handle late events (up to 72h).
+       - `RN-11`: Anonymize customer sensitive data (name, document, email).
+       - Recalculate affected Gold partitions for late events.
     3. **TaskGroup: `spark_silver_transformations`**:
-       - `RN-01, RN-02, RN-06`: Cálculo de ventas netas, cancelaciones post-despacho y devoluciones en ventana de 30 días.
-       - `RN-03`: Cálculo de inventario disponible (`físico - reservado - en tránsito`).
-       - Distribución de carga configurada para clúster Spark de 2 Workers.
-    4. **Control de Calidad**: Validación y cierre de pipeline.
+       - `RN-01, RN-02, RN-06`: Net sales calculation, cancellations, and returns.
+       - `RN-03`: Available inventory (physical - reserved - in transit).
+    4. **Data Quality**: Log metrics and verify processing before pipeline close.
     """,
 ) as dag:
 
     start_pipeline = EmptyOperator(
         task_id="start_pipeline",
-        doc_md="Punto de entrada del pipeline Bronze -> Silver.",
+        doc_md="Pipeline start point.",
     )
 
-    with TaskGroup("bronze_cleaning_compliance", tooltip="Fase 1: Limpieza, deduplicación y cumplimiento normativo") as tg_cleaning:
+    with TaskGroup("bronze_cleaning_compliance", tooltip="Phase 1: Cleaning, deduplication and compliance") as tg_cleaning:
         t_deduplicate = PythonOperator(
             task_id="rn_10_deduplicate_late_events",
             python_callable=deduplicate_and_handle_late_events,
-            doc_md="Descarta eventos duplicados e incorpora eventos con retraso <= 72h.",
+            doc_md="Discards duplicate events and incorporates late events (delay <= 72h).",
         )
 
         t_quality_alert = PythonOperator(
@@ -195,12 +428,18 @@ with DAG(
         t_anonymize = PythonOperator(
             task_id="rn_11_anonymize_personal_data",
             python_callable=anonymize_personal_data,
-            doc_md="Aplica hash MD5 a nombres, documentos y correos de clientes.",
+            doc_md="Applies MD5 hash to customer names, documents, and emails.",
         )
 
-        t_deduplicate >> [t_quality_alert, t_anonymize]
+        t_recalculate = PythonOperator(
+            task_id="rn_10_recalculate_gold_partitions",
+            python_callable=recalculate_affected_gold_partitions,
+            doc_md="Recalculates only the Gold partitions affected by late events (<= 72h).",
+        )
 
-    with TaskGroup("spark_silver_transformations", tooltip="Fase 2: Transformaciones analíticas con Apache Spark (2 Workers)") as tg_spark:
+        t_deduplicate >> [t_quality_alert, t_anonymize] >> t_recalculate
+
+    with TaskGroup("spark_silver_transformations", tooltip="Phase 2: Spark analytical transformations") as tg_spark:
         t_net_sales = SparkSubmitOperator(
             task_id="rn_01_02_06_spark_net_sales",
             application="/opt/spark_jobs/net_sales_job.py",
@@ -216,7 +455,7 @@ with DAG(
                 "spark.executor.memory": "1G",
             },
             env_vars={"S3_BUCKET": BUCKET},
-            doc_md="Job Spark para ventas netas con manejo de cancelaciones y devoluciones.",
+            doc_md="Spark job for net sales with cancellations and returns.",
         )
 
         t_available_inventory = SparkSubmitOperator(
@@ -234,19 +473,19 @@ with DAG(
                 "spark.executor.memory": "1G",
             },
             env_vars={"S3_BUCKET": BUCKET},
-            doc_md="Job Spark para inventario disponible = físico - reservado - en tránsito.",
+            doc_md="Spark job for available inventory = physical - reserved - in transit.",
         )
 
     t_verify = PythonOperator(
         task_id="verify_silver_layer_quality",
         python_callable=verify_silver_layer_quality,
-        doc_md="Verificación de calidad de datos procesados hacia Silver.",
+        doc_md="Verify data quality metrics before pipeline completion.",
     )
 
     end_pipeline = EmptyOperator(
         task_id="end_pipeline",
-        doc_md="Punto de finalización exitosa del pipeline Bronze -> Silver.",
+        doc_md="Successful completion of the Bronze to Silver pipeline.",
     )
 
-    # Flujo ordenado Medallion: Limpieza y Compliance PRIMERO, luego transformaciones analíticas Spark
+    # Medallion order: Cleaning and Compliance first, then Spark transformations
     start_pipeline >> tg_cleaning >> tg_spark >> t_verify >> end_pipeline

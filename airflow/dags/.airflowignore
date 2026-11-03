@@ -1,3 +1,0 @@
-# The operational messaging package is mounted inside the DAGs folder so DAGs can import it.
-# Airflow must not parse its modules as DAG files.
-operational_messaging

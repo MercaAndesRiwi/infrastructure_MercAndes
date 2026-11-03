@@ -11,11 +11,10 @@ Architecture: Optimized for AWS S3 Data Lake + Multi-Worker Spark Cluster.
 from __future__ import annotations
 
 import os
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import boto3
 from airflow import DAG
-import pendulum
 from airflow.operators.python import PythonOperator
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.utils.task_group import TaskGroup
@@ -28,7 +27,7 @@ except ImportError:
 default_args = {
     "owner": "MercaAndes Data Team",
     "depends_on_past": False,
-    "email": ["data-team@mercaandes.com"],
+    "email": ["yailauc_19@gmail.com"],
     "email_on_failure": True,
     "email_on_retry": False,
     "retries": 3,
@@ -105,35 +104,35 @@ with DAG(
     default_args=default_args,
     description="One-time definitive load of Kaggle F1 (Olist) to S3 Bronze + Spark Silver initialization.",
     schedule="@once",
-    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
+    start_date=datetime(2026, 11, 5, 10, 0),
     catchup=False,
     max_active_runs=1,
     tags=["layer:bronze", "f1", "kaggle", "historical", "mercaandes"],
     doc_md="""
-    # Carga Histórica F1 Olist (MercaAndes)
+    # F1 Kaggle Historical Load Pipeline
     
-    1. **Ingesta a S3 Bronze**: Carga de los 9 datasets de Brazilian E-Commerce (Olist).
-    2. **Validación de Calidad**: Verifica la existencia de datasets críticos (clientes, órdenes, ítems, productos).
-    3. **Spark Bronze -> Silver**: Inicializa las transformaciones de ventas netas e inventarios.
+    1. **S3 Bronze Ingestion**: Loads the 9 Brazilian E-Commerce (Olist) CSV datasets.
+    2. **Quality Validation**: Checks for critical datasets (customers, orders, items, products).
+    3. **Spark Bronze -> Silver**: Initializes net sales and inventory transformations.
     """,
 ) as dag:
 
     start_f1_load = EmptyOperator(
         task_id="start_f1_load",
-        doc_md="Punto de inicio para la carga histórica F1.",
+        doc_md="Start point for F1 historical load.",
     )
 
-    with TaskGroup("f1_ingestion_and_validation", tooltip="Carga de archivos y validación en S3 Bronze") as tg_f1:
+    with TaskGroup("f1_ingestion_and_validation", tooltip="File upload and validation in S3 Bronze") as tg_f1:
         t_upload = PythonOperator(
             task_id="upload_local_f1_to_s3",
             python_callable=upload_local_f1_to_s3,
-            doc_md="Carga datasets Olist a S3 Bronze.",
+            doc_md="Uploads Olist datasets to S3 Bronze.",
         )
 
         t_validate = PythonOperator(
             task_id="validate_f1_bronze_datasets",
             python_callable=validate_f1_bronze_datasets,
-            doc_md="Valida que los datasets requeridos existan en S3 Bronze.",
+            doc_md="Validates that required datasets exist in S3 Bronze.",
         )
 
         t_upload >> t_validate
@@ -153,12 +152,12 @@ with DAG(
             "spark.executor.memory": "1G",
         },
         env_vars={"S3_BUCKET": BUCKET},
-        doc_md="Inicializa las tablas Silver con el histórico de ventas F1 usando los 2 workers de Spark.",
+        doc_md="Initializes Silver tables with historical sales using Spark workers.",
     )
 
     end_f1_load = EmptyOperator(
         task_id="end_f1_load",
-        doc_md="Finalización exitosa de la carga histórica F1.",
+        doc_md="Successful completion of F1 historical load.",
     )
 
     start_f1_load >> tg_f1 >> t_spark_init >> end_f1_load

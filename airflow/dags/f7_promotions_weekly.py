@@ -17,7 +17,6 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-import pendulum
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.utils.task_group import TaskGroup
@@ -30,7 +29,7 @@ except ImportError:
 default_args = {
     "owner": "MercaAndes Data Team",
     "depends_on_past": False,
-    "email": ["data-team@mercaandes.com"],
+    "email": ["yailauc_19@gmail.com"],
     "email_on_failure": True,
     "email_on_retry": False,
     "retries": 3,
@@ -241,52 +240,52 @@ with DAG(
     dag_id="f7_promotions_weekly",
     default_args=default_args,
     description="Weekly F7 promotion load: S3 -> validation (RN-05) + silent store alert (RN-12) to RabbitMQ.",
-    schedule="@weekly",
-    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
+    schedule="0 10 * * 4",
+    start_date=datetime(2026, 11, 5, 10, 0),
     catchup=False,
     max_active_runs=1,
     tags=["layer:bronze", "f7", "promotions", "alerts", "mercaandes"],
     doc_md="""
-    # Ingesta Semanal de Promociones F7 y Monitoreo (MercaAndes)
+    # Weekly Promotions (F7) Ingestion and Store Monitoring
     
     1. **TaskGroup: `promotions_ingestion_and_validation` (Worker 1)**:
-       - Carga de archivo de promociones a S3 Bronze (`bronze/f7_promotions/...`).
-       - `RN-05`: Valida que la cobertura de inventario del SKU sea >= 7 días; si es menor, se rechaza la promoción.
-    2. **TaskGroup: `store_operational_monitoring` (Worker 2 - En Paralelo)**:
-       - `RN-12`: Detecta tiendas sin ventas en las últimas 2 horas de horario hábil (08:00-20:00) y publica alertas a RabbitMQ.
+       - Uploads weekly promotions file to S3 Bronze (`bronze/f7_promotions/...`).
+       - `RN-05`: Validates that SKU inventory coverage is >= 7 days; rejects promotion if lower.
+    2. **TaskGroup: `store_operational_monitoring` (Worker 2 - In Parallel)**:
+       - `RN-12`: Detects stores with zero sales in the last 2 operating hours (08:00-20:00) and alerts RabbitMQ.
     """,
 ) as dag:
 
     start_weekly_promotions = EmptyOperator(
         task_id="start_weekly_promotions",
-        doc_md="Inicio de flujo semanal de promociones y monitoreo de tiendas.",
+        doc_md="Start of weekly promotions flow and store monitoring.",
     )
 
-    with TaskGroup("promotions_ingestion_and_validation", tooltip="Ingesta S3 y validación de cobertura mínima (RN-05)") as tg_promotions:
+    with TaskGroup("promotions_ingestion_and_validation", tooltip="S3 ingestion and coverage validation (RN-05)") as tg_promotions:
         t_upload = PythonOperator(
             task_id="upload_f7_to_s3",
             python_callable=upload_local_f7_to_s3,
-            doc_md="Sube archivo semanal de promociones a S3 Bronze.",
+            doc_md="Uploads weekly promotions file to S3 Bronze.",
         )
 
         t_validate_coverage = PythonOperator(
             task_id="rn_05_validate_promotion_coverage",
             python_callable=validate_promotion_coverage,
-            doc_md="Valida que la cobertura de stock sea >= 7 días (RN-05).",
+            doc_md="Validates inventory coverage >= 7 days (RN-05).",
         )
 
         t_upload >> t_validate_coverage
 
-    with TaskGroup("store_operational_monitoring", tooltip="RN-12: Detección de tiendas inactivas") as tg_store_monitoring:
+    with TaskGroup("store_operational_monitoring", tooltip="RN-12: Silent store detection") as tg_store_monitoring:
         t_silent_store = PythonOperator(
             task_id="rn_12_publish_silent_store_alert",
             python_callable=publish_silent_store_alert,
-            doc_md="Publica alerta de tienda silenciosa en RabbitMQ.",
+            doc_md="Publishes silent store alert to RabbitMQ.",
         )
 
     end_weekly_promotions = EmptyOperator(
         task_id="end_weekly_promotions",
-        doc_md="Finalización exitosa del ciclo semanal de promociones.",
+        doc_md="Successful completion of weekly promotions cycle.",
     )
 
     # Paralelismo distribuido en los 2 workers

@@ -12,10 +12,9 @@ Architecture: Optimized for AWS Multi-Worker Cluster (ECS / EC2 + RabbitMQ + RDS
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from airflow import DAG
-import pendulum
 from airflow.operators.python import PythonOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from airflow.utils.task_group import TaskGroup
@@ -31,7 +30,7 @@ except ImportError:
 default_args = {
     "owner": "MercaAndes Data Team",
     "depends_on_past": False,
-    "email": ["data-team@mercaandes.com"],
+    "email": ["yailauc_19@gmail.com"],
     "email_on_failure": True,
     "email_on_retry": False,
     "retries": 3,
@@ -191,55 +190,55 @@ with DAG(
     dag_id="silver_to_gold_business_rules",
     default_args=default_args,
     description="Business rules Silver -> Gold (RN-04, RN-09). Distributes alerts to RabbitMQ queue.",
-    schedule="@daily",
-    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
+    schedule="0 10 * * *",
+    start_date=datetime(2026, 11, 5, 10, 0),
     catchup=False,
     max_active_runs=1,
     tags=["layer:gold", "business-rules", "inventory", "alerts", "mercaandes"],
     doc_md="""
-    # Reglas de Negocio Silver a Gold (MercaAndes)
+    # Silver to Gold Business Rules (MercaAndes)
     
-    Este DAG materializa las tablas Gold para Serving/Analytics y emite alertas operacionales:
+    This DAG materializes Gold tables for Serving/Analytics and emits operational alerts:
     
     1. **TaskGroup: `stockout_risk_monitoring` (Worker 1)**:
-       - `RN-04`: Evalúa el riesgo de quiebre de stock cruzando con el calendario de festivos (umbral de 3 o 5 días).
-       - Publica las alertas críticas a RabbitMQ (`alertas.riesgo_quiebre`).
-    2. **TaskGroup: `seller_inventory_performance` (Worker 2 - En Paralelo)**:
-       - `RN-09`: Calcula la exactitud de inventario por vendedor en ventana móvil de 30 días.
+       - `RN-04`: Evaluates stockout risk against the holiday calendar (3 or 5 days threshold).
+       - Publishes critical alerts to RabbitMQ (`alertas.riesgo_quiebre`).
+    2. **TaskGroup: `seller_inventory_performance` (Worker 2 - In Parallel)**:
+       - `RN-09`: Calculates seller inventory accuracy over a 30-day rolling window.
     """,
 ) as dag:
 
     start_business_rules = EmptyOperator(
         task_id="start_business_rules",
-        doc_md="Punto de inicio para cálculo de reglas de negocio Silver -> Gold.",
+        doc_md="Start point for Silver -> Gold business rules calculation.",
     )
 
-    with TaskGroup("stockout_risk_monitoring", tooltip="RN-04: Monitoreo de Riesgo de Quiebre de Stock") as tg_stockout:
+    with TaskGroup("stockout_risk_monitoring", tooltip="RN-04: Stockout Risk Monitoring") as tg_stockout:
         t_stockout_risk = PythonOperator(
             task_id="rn_04_calculate_stockout_risk",
             python_callable=calculate_stockout_risk,
-            doc_md="Calcula SKU en riesgo según ventas promedio e impacto de festivos.",
+            doc_md="Evaluates SKUs at risk based on daily average sales and upcoming holidays.",
         )
 
         t_stockout_alert = PythonOperator(
             task_id="rn_04_publish_stockout_alerts",
             python_callable=publish_stockout_alerts,
-            doc_md="Publica alertas operacionales a RabbitMQ en la subred privada.",
+            doc_md="Publishes operational stockout alerts to RabbitMQ.",
         )
 
         t_stockout_risk >> t_stockout_alert
 
-    with TaskGroup("seller_inventory_performance", tooltip="RN-09: Evaluación de Exactitud de Vendedores") as tg_seller:
+    with TaskGroup("seller_inventory_performance", tooltip="RN-09: Seller Inventory Accuracy") as tg_seller:
         t_inventory_accuracy = PythonOperator(
             task_id="rn_09_calculate_inventory_accuracy",
             python_callable=calculate_inventory_accuracy,
-            doc_md="Calcula % de órdenes no canceladas por falta de stock (RN-09).",
+            doc_md="Calculates percentage of orders without out-of-stock cancellations (RN-09).",
         )
 
     end_business_rules = EmptyOperator(
         task_id="end_business_rules",
-        doc_md="Punto de finalización exitosa de reglas de negocio Silver -> Gold.",
+        doc_md="Successful completion of Silver -> Gold business rules.",
     )
 
-    # Ejecución paralela en los 2 workers
+    # Parallel execution across workers
     start_business_rules >> [tg_stockout, tg_seller] >> end_business_rules

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import os
 import csv
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from airflow import DAG
-import pendulum
 from airflow.operators.python import PythonOperator
 from airflow.sensors.python import PythonSensor
 from airflow.providers.docker.operators.docker import DockerOperator
@@ -22,7 +21,7 @@ except ImportError:
 default_args = {
     "owner": "MercaAndes Data Team",
     "depends_on_past": False,
-    "email": ["data-team@mercaandes.com"],
+    "email": ["yailauc_19@gmail.com"],
     "email_on_failure": True,
     "email_on_retry": False,
     "retries": 3,
@@ -369,19 +368,18 @@ with DAG(
     dag_id="seller_scoring",
     default_args=default_args,
     description="Weekly seller scoring with PySpark and RN-08 status management.",
-    schedule="@weekly",
-    start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
+    schedule="0 10 * * 4",
+    start_date=datetime(2026, 11, 5, 10, 0),
     catchup=False,
     max_active_runs=1,
     is_paused_upon_creation=False,
     tags=["layer:gold", "seller", "scoring", "mercaandes"],
     doc_md="""
-    # Evaluación semanal de vendedores
+    # Weekly Seller Scoring Workflow
 
-    Airflow espera los datos Silver (liberando el worker mientras espera),
-    valida sus identificadores, ejecuta el contenedor del job PySpark y,
-    cuando este termina correctamente, aplica RN-08 usando el historial semanal
-    guardado en Gold. El puntaje vigente queda en `gold_seller_score` para la API.
+    Airflow checks Silver metrics, runs the PySpark seller score job,
+    and applies status rules based on weekly Gold history. Current score
+    is stored in `gold_seller_score` for downstream consumption.
     """,
 ) as dag:
     start_scoring = EmptyOperator(task_id="start_scoring")

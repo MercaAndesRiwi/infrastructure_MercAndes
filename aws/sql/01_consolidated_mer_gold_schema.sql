@@ -390,3 +390,24 @@ CREATE TABLE IF NOT EXISTS public.gold_seller_status (
     reason      TEXT NOT NULL DEFAULT 'active',
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+
+-- ==============================================================================
+-- 5. DATA QUALITY METRICS & AUDIT LOG (Observability & Governance)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.data_quality_metrics (
+    metric_id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    load_id                     VARCHAR(256) NOT NULL,
+    source_system               VARCHAR(64) NOT NULL,
+    records_processed           INTEGER NOT NULL DEFAULT 0,
+    duplicates_detected         INTEGER NOT NULL DEFAULT 0,
+    late_arrivals_incorporated  INTEGER NOT NULL DEFAULT 0,
+    rejections_exceeded_72h     INTEGER NOT NULL DEFAULT 0,
+    quality_status              VARCHAR(32) NOT NULL DEFAULT 'PASSED',
+    details                     JSONB,
+    logged_at                   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_data_quality_metrics_load_source
+    ON public.data_quality_metrics (load_id, source_system);
+CREATE INDEX IF NOT EXISTS idx_data_quality_metrics_logged_at
+    ON public.data_quality_metrics (logged_at);
