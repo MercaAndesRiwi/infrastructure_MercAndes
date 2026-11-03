@@ -3,14 +3,17 @@
 
 -- Seed the score groups' geography (including Brazil for Olist) without
 -- interpreting Brazilian state abbreviations as Andean country codes.
-INSERT INTO public.dim_currency (currency_code, currency_name)
-VALUES ('COP', 'Colombian Peso'), ('PEN', 'Peruvian Sol'),
-       ('USD', 'US Dollar'), ('BOB', 'Bolivian Boliviano'),
-       ('CLP', 'Chilean Peso'), ('BRL', 'Brazilian Real')
+INSERT INTO public.dim_currency (currency_id, currency_code, currency_name, is_active)
+VALUES (gen_random_uuid(), 'COP', 'Colombian Peso', TRUE),
+       (gen_random_uuid(), 'PEN', 'Peruvian Sol', TRUE),
+       (gen_random_uuid(), 'USD', 'US Dollar', TRUE),
+       (gen_random_uuid(), 'BOB', 'Bolivian Boliviano', TRUE),
+       (gen_random_uuid(), 'CLP', 'Chilean Peso', TRUE),
+       (gen_random_uuid(), 'BRL', 'Brazilian Real', TRUE)
 ON CONFLICT (currency_code) DO NOTHING;
 
-INSERT INTO public.dim_country (country_code, country_name, currency_id)
-SELECT country.country_code, country.country_name, currency.currency_id
+INSERT INTO public.dim_country (country_id, country_code, country_name, currency_id)
+SELECT gen_random_uuid(), country.country_code, country.country_name, currency.currency_id
 FROM (VALUES ('CO', 'Colombia', 'COP'), ('PE', 'Peru', 'PEN'),
              ('EC', 'Ecuador', 'USD'), ('BO', 'Bolivia', 'BOB'),
              ('CL', 'Chile', 'CLP'), ('BR', 'Brazil', 'BRL'))
@@ -19,10 +22,12 @@ JOIN public.dim_currency currency USING (currency_code)
 ON CONFLICT (country_code) DO NOTHING;
 
 -- One canonical simulated seller per country and seller type.
-INSERT INTO public.dim_seller (country_id, seller_name, external)
-SELECT country.country_id,
+INSERT INTO public.dim_seller (seller_id, country_id, seller_name, external, is_active)
+SELECT gen_random_uuid(),
+       country.country_id,
        'Seller score group ' || country.country_code || ' ' || seller_type,
-       seller_type = 'third_party'
+       seller_type = 'third_party',
+       TRUE
 FROM public.dim_country country
 CROSS JOIN (VALUES ('own'), ('third_party')) AS types(seller_type)
 WHERE country.country_code IN ('CO', 'PE', 'EC', 'BO', 'CL', 'BR')
