@@ -76,6 +76,8 @@ Docker will automatically:
 4. Start Apache Kafka and create the required order topics.
 5. Launch the Spark cluster, Airflow orchestrator, and the Marketplace API.
 
+The same startup also applies the idempotent `gold_seller_score` schema to the shared PostgreSQL database. This works with both a new database volume and an existing volume. The Inventory API starts after that schema step completes.
+
 ---
 
 ## 3. Real Customer Purchase & Email Dispatch
@@ -153,15 +155,33 @@ Access the Airflow UI at `http://localhost:8080` to orchestrate data lake transf
 [3. silver_to_gold_business_rules] (@daily - Parallel execution: Stockout risk & Seller accuracy)
               │
               ▼
-[4. seller_scoring]                (@weekly - Seller performance scoring 0-100)
+[4. seller_scoring]                (@weekly - PySpark score + SQL seller status)
               │
               ▼
 [5. f7_promotions_weekly]          (@weekly - Weekly promotions ingestion & silent store alerts)
 ```
 
+El DAG `seller_scoring` se ejecuta semanalmente. Primero consume los eventos pendientes de Marketplace desde Kafka y carga reseñas del CSV histórico Olist para órdenes con un solo vendedor. Después espera los datos de inventario y las equivalencias de IDs, valida las entradas Silver, inicia Spark y actualiza el estado del vendedor. El cálculo SQL anterior del puntaje fue retirado para que RN-07 tenga una sola implementación.
+
 ---
 
-## 6. Stopping the Platform
+## 6. Seller score job (US-07)
+
+The Spark transformation remains in `MercaAndes_Spark_Gold_Transformations`. This repository adds its Docker runtime, creates `gold_seller_score` in the shared PostgreSQL database, and lets the API read that persisted result. The dimension table remains `public.dim_seller`; the score output is stored separately in `public.gold_seller_score`.
+
+The job runtime uses a Python 3.11 virtual environment created with `uv`, Java 17, PySpark 3.5.1, and psycopg2 2.9.9. The versions match the Spark project. The current score job uses Spark local mode, matching its existing Spark session configuration. Airflow workers use the Docker socket to start the short-lived job container; therefore they have permission to manage containers through the local Docker engine.
+
+The job reads relational Silver tables through JDBC; no Parquet files are required. Marketplace events are landed idempotently in PostgreSQL by a small Uv-based service, then materialized as dispatch and cancellation rows. Olist reviews are loaded from the existing historical CSVs, and reviews from orders with multiple sellers are skipped. Since the simulated catalogs do not share seller identities, Airflow maps source IDs to a common `(country, seller_type)` cohort UUID in `public.dim_seller_source_key`. The Inventory API has no stock count history, so Airflow creates deterministic simulated accuracy observations. If Kafka has no Marketplace events, repeatable sample dispatch and cancellation rows keep the demo runnable. These rules are for simulated data, not production identity resolution or measured stockout rates. Details are in [`inputs/seller_score/README.md`](inputs/seller_score/README.md).
+
+Start the platform, including the Uv-based Spark runtime, with:
+
+```bash
+docker compose up -d --build
+```
+
+Airflow creates new DAGs paused by default in this Compose setup. Unpause `seller_scoring` in the Airflow UI to enable its weekly schedule. After the DAG writes a row, query `GET /api/v1/sellers/{seller_id}/score` with an API `SEL-*` ID or mapped `dim_seller` UUID. IDs in the same country/type cohort intentionally return the same demo score. A seller without a score returns `404`; if the score table is unavailable, the API returns `503`.
+
+## 7. Stopping the Platform
 
 To stop all running containers cleanly:
 

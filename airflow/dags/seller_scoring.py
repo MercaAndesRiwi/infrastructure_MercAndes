@@ -1,23 +1,18 @@
-"""
-DAG: seller_scoring
-Purpose: Weekly Seller scoring and operational status management.
-Implements:
-  - RN-07: Seller score (0-100): 40% on-time dispatch, 30% reviews, 20% inventory accuracy, 10% inverse cancellation.
-  - RN-08: Status management: score < 60 for 2 weeks = observation; score < 45 for 2 weeks = suspended.
-
-Schedule: @weekly
-Architecture: Optimized for AWS Multi-Worker Cluster (ECS Fargate + RDS PostgreSQL).
-"""
+"""Weekly seller score and status workflow."""
 
 from __future__ import annotations
 
+import os
+import csv
 from datetime import timedelta
+from pathlib import Path
 
 from airflow import DAG
 import pendulum
 from airflow.operators.python import PythonOperator
+from airflow.sensors.python import PythonSensor
+from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from airflow.utils.task_group import TaskGroup
 
 try:
     from airflow.operators.empty import EmptyOperator
@@ -34,191 +29,448 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "retry_exponential_backoff": True,
     "max_retry_delay": timedelta(minutes=30),
-    "execution_timeout": timedelta(minutes=30),
+    "execution_timeout": timedelta(minutes=60),
 }
 
-def validate_scoring_prerequisites(**context):
-    """Verifies that source metrics (orders, reviews) exist before evaluating scores."""
+
+def load_olist_seller_reviews(**context):
+    """Load historical Olist reviews only when an order has one known seller."""
+    input_dir = Path(os.getenv("F1_KAGGLE_LOCAL_INPUT_PATH", "/opt/inputs/f1_kaggle"))
+    items_path = input_dir / "olist_order_items_dataset.csv"
+    reviews_path = input_dir / "olist_order_reviews_dataset.csv"
+    if not items_path.exists() or not reviews_path.exists():
+        raise FileNotFoundError(
+            "Olist review inputs are missing from " + str(input_dir)
+        )
+
+    sellers_by_order = {}
+    with items_path.open(encoding="utf-8", newline="") as source:
+        for row in csv.DictReader(source):
+            sellers_by_order.setdefault(row["order_id"], set()).add(row["seller_id"])
+
+    review_rows = []
+    skipped_ambiguous = 0
+    with reviews_path.open(encoding="utf-8", newline="") as source:
+        for row in csv.DictReader(source):
+            sellers = sellers_by_order.get(row["order_id"], set())
+            if len(sellers) != 1:
+                skipped_ambiguous += 1
+                continue
+            review_score = int(row["review_score"])
+            if not 1 <= review_score <= 5:
+                continue
+            seller_id = next(iter(sellers))
+            review_rows.append(
+                (
+                    f"{row['review_id']}:{seller_id}",
+                    "olist",
+                    seller_id,
+                    review_score,
+                    row.get("review_creation_date") or None,
+                )
+            )
+
     pg_hook = PostgresHook(postgres_conn_id="pos_db")
     conn = pg_hook.get_conn()
-    cur = conn.cursor()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    """
+                    INSERT INTO public.silver_seller_score_reviews
+                        (review_id, source_system, source_seller_id, review_score, reviewed_at)
+                    VALUES (%s, %s, %s, %s, %s)
+                    ON CONFLICT (review_id) DO UPDATE SET
+                        source_seller_id = EXCLUDED.source_seller_id,
+                        review_score = EXCLUDED.review_score,
+                        reviewed_at = EXCLUDED.reviewed_at
+                    """,
+                    review_rows,
+                )
+    finally:
+        conn.close()
 
-    cur.execute("SELECT COUNT(*) FROM sellers;")
-    total_sellers = cur.fetchone()[0]
-
-    cur.close()
-    conn.close()
-
-    print(f"[PRE-CHECK] Vendedores registrados en la plataforma: {total_sellers}")
-    return total_sellers
-
-def calculate_seller_score(**context):
-    """
-    RN-07: Seller score (0-100):
-      40% on-time dispatch compliance,
-      30% review rating,
-      20% inventory accuracy,
-      10% inverse cancellation rate.
-    Connects to Postgres (RDS): merca_pos.
-    """
-    pg_hook = PostgresHook(postgres_conn_id="pos_db")
-    conn = pg_hook.get_conn()
-    cur = conn.cursor()
-
-    cur.execute(
-        """
-        INSERT INTO gold_seller_score (seller_id, score, dispatch_pct, review_rating,
-                                    inventory_accuracy, cancellation_rate, calculated_at)
-        SELECT
-            s.seller_id,
-            ROUND(
-                COALESCE(d.dispatch_pct, 0) * 0.40 +
-                COALESCE(r.review_rating, 0) * 0.30 +
-                COALESCE(ia.accuracy_pct, 0) * 0.20 +
-                (100 - COALESCE(c.cancellation_rate, 0)) * 0.10,
-                2
-            ) AS score,
-            COALESCE(d.dispatch_pct, 0),
-            COALESCE(r.review_rating, 0),
-            COALESCE(ia.accuracy_pct, 0),
-            COALESCE(c.cancellation_rate, 0),
-            NOW()
-        FROM sellers s
-        LEFT JOIN (
-            SELECT seller_id,
-                   ROUND(100.0 * SUM(CASE WHEN dispatched_on_time THEN 1 ELSE 0 END) / COUNT(*), 2) AS dispatch_pct
-            FROM order_items oi
-            JOIN orders o ON oi.order_id = o.order_id
-            WHERE o.order_date >= CURRENT_DATE - INTERVAL '30 days'
-            GROUP BY seller_id
-        ) d ON d.seller_id = s.seller_id
-        LEFT JOIN (
-            SELECT seller_id, AVG(review_score) AS review_rating
-            FROM order_reviews r
-            JOIN orders o ON r.order_id = o.order_id
-            WHERE r.review_date >= CURRENT_DATE - INTERVAL '30 days'
-            GROUP BY seller_id
-        ) r ON r.seller_id = s.seller_id
-        LEFT JOIN gold_inventory_accuracy ia ON ia.seller_id = s.seller_id
-        LEFT JOIN (
-            SELECT seller_id,
-                   ROUND(100.0 * SUM(CASE WHEN cancel_reason = 'customer_initiated' THEN 1 ELSE 0 END) / COUNT(*), 2) AS cancellation_rate
-            FROM orders
-            WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
-            GROUP BY seller_id
-        ) c ON c.seller_id = s.seller_id
-        ON CONFLICT (seller_id)
-        DO UPDATE SET score = EXCLUDED.score,
-                    dispatch_pct = EXCLUDED.dispatch_pct,
-                    review_rating = EXCLUDED.review_rating,
-                    inventory_accuracy = EXCLUDED.inventory_accuracy,
-                    cancellation_rate = EXCLUDED.cancellation_rate,
-                    updated_at = NOW()
-        """
+    print(
+        f"[SELLER SCORE REVIEWS] Loaded {len(review_rows)} Olist reviews; "
+        f"skipped {skipped_ambiguous} ambiguous orders."
     )
-    inserted = cur.rowcount
-    conn.commit()
+    return {"loaded": len(review_rows), "skipped_ambiguous": skipped_ambiguous}
+
+
+def prepare_simulated_seller_score_inputs(**context):
+    """Map source IDs to country/type cohorts and create deterministic stock checks."""
+    pg_hook = PostgresHook(postgres_conn_id="pos_db")
+    conn = pg_hook.get_conn()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                # Marketplace IDs carry country and ownership type in their events.
+                cur.execute("""
+                    INSERT INTO public.dim_seller_source_key
+                        (source_system, source_seller_id, seller_id)
+                    SELECT DISTINCT 'marketplace', event.source_seller_id, seller.seller_id
+                    FROM public.marketplace_seller_score_events event
+                    JOIN public.dim_country country
+                      ON country.country_code = event.source_country
+                    JOIN public.dim_seller seller
+                      ON seller.country_id = country.country_id
+                     AND seller.external = (event.source_seller_type = 'third_party')
+                     AND seller.seller_name = 'Seller score group ' || event.source_country || ' ' || event.source_seller_type
+                    ON CONFLICT (source_system, source_seller_id) DO UPDATE
+                    SET seller_id = EXCLUDED.seller_id
+                """)
+                # Inventory API's synthetic catalog already contains country and type.
+                cur.execute("""
+                    INSERT INTO public.dim_seller_source_key
+                        (source_system, source_seller_id, seller_id)
+                    SELECT 'inventory_api', source.seller_id, canonical.seller_id
+                    FROM public.sellers source
+                    JOIN public.dim_country country ON country.country_code = source.country
+                    JOIN public.dim_seller canonical
+                      ON canonical.country_id = country.country_id
+                     AND canonical.external = (source.seller_type = 'third_party')
+                     AND canonical.seller_name = 'Seller score group ' || source.country || ' ' || source.seller_type
+                    ON CONFLICT (source_system, source_seller_id) DO UPDATE
+                    SET seller_id = EXCLUDED.seller_id
+                """)
+                # Olist only supplies Brazilian sellers; state values are not countries.
+                cur.execute("""
+                    INSERT INTO public.dim_seller_source_key
+                        (source_system, source_seller_id, seller_id)
+                    SELECT DISTINCT 'olist', source.source_seller_id, canonical.seller_id
+                    FROM public.silver_seller_score_reviews source
+                    JOIN public.dim_country country ON country.country_code = 'BR'
+                    JOIN public.dim_seller canonical
+                      ON canonical.country_id = country.country_id
+                     AND canonical.seller_name = 'Seller score group BR third_party'
+                    ON CONFLICT (source_system, source_seller_id) DO UPDATE
+                    SET seller_id = EXCLUDED.seller_id
+                """)
+                # These repeatable examples keep the local/demo score runnable
+                # even when Marketplace has not emitted Kafka events yet.
+                cur.execute("""
+                    INSERT INTO public.dim_seller_source_key
+                        (source_system, source_seller_id, seller_id)
+                    SELECT 'marketplace', 'SIM-' || country.country_code || '-' || seller_type,
+                           canonical.seller_id
+                    FROM public.dim_country country
+                    CROSS JOIN (VALUES ('own'), ('third_party')) AS types(seller_type)
+                    JOIN public.dim_seller canonical
+                      ON canonical.country_id = country.country_id
+                     AND canonical.external = (seller_type = 'third_party')
+                     AND canonical.seller_name = 'Seller score group ' || country.country_code || ' ' || seller_type
+                    WHERE country.country_code IN ('CO', 'PE', 'EC', 'BO', 'CL', 'BR')
+                    ON CONFLICT (source_system, source_seller_id) DO UPDATE
+                    SET seller_id = EXCLUDED.seller_id
+                """)
+                cur.execute("""
+                    INSERT INTO public.silver_seller_score_dispatch
+                        (dispatch_id, source_system, source_seller_id, paid_at, shipped_at)
+                    SELECT 'sim-dispatch-' || source_key.source_seller_id || '-' || sample.n,
+                           'marketplace', source_key.source_seller_id,
+                           NOW() - (sample.n || ' days')::interval,
+                           NOW() - (sample.n || ' days')::interval
+                               + CASE WHEN sample.n <= 4 THEN INTERVAL '12 hours' ELSE INTERVAL '36 hours' END
+                    FROM public.dim_seller_source_key source_key
+                    CROSS JOIN generate_series(1, 5) AS sample(n)
+                    WHERE source_key.source_system = 'marketplace'
+                      AND source_key.source_seller_id LIKE 'SIM-%'
+                    ON CONFLICT (dispatch_id) DO NOTHING
+                """)
+                cur.execute("""
+                    INSERT INTO public.silver_seller_score_cancellations
+                        (order_id, source_system, source_seller_id, cancelled, cancellation_reason, cancelled_at)
+                    SELECT 'sim-order-' || source_key.source_seller_id || '-' || sample.n,
+                           'marketplace', source_key.source_seller_id, sample.n = 1,
+                           CASE WHEN sample.n = 1 THEN 'simulated' ELSE NULL END, NOW()
+                    FROM public.dim_seller_source_key source_key
+                    CROSS JOIN generate_series(1, 5) AS sample(n)
+                    WHERE source_key.source_system = 'marketplace'
+                      AND source_key.source_seller_id LIKE 'SIM-%'
+                    ON CONFLICT (order_id) DO NOTHING
+                """)
+                # The API has simulated stock quantities, not historical truth labels.
+                # Generate a stable simulated accuracy observation for each catalog ID.
+                cur.execute("""
+                    INSERT INTO public.silver_seller_score_inventory
+                        (observation_id, source_system, source_seller_id, inventory_accurate, observed_at)
+                    SELECT 'sim-stock-' || source.seller_id, 'inventory_api', source.seller_id,
+                           mod(abs(hashtext(source.seller_id))::bigint, 10) <> 0, NOW()
+                    FROM public.sellers source
+                    ON CONFLICT (observation_id) DO UPDATE
+                    SET inventory_accurate = EXCLUDED.inventory_accurate,
+                        observed_at = EXCLUDED.observed_at
+                """)
+    finally:
+        conn.close()
+
+
+def validate_scoring_prerequisites(**context):
+    """Check that Silver source tables exist and their seller keys are mapped."""
+    pg_hook = PostgresHook(postgres_conn_id="pos_db")
+    conn = pg_hook.get_conn()
+    cur = conn.cursor()
+    checks = {
+        "sellers": "SELECT COUNT(*) FROM public.dim_seller",
+        "seller keys": "SELECT COUNT(*) FROM public.dim_seller_source_key",
+        "dispatch": "SELECT COUNT(*) FROM public.silver_seller_score_dispatch WHERE source_system = 'marketplace'",
+        "reviews": "SELECT COUNT(*) FROM public.silver_seller_score_reviews WHERE source_system = 'olist'",
+        "inventory": "SELECT COUNT(*) FROM public.silver_seller_score_inventory WHERE source_system = 'inventory_api'",
+        "cancellations": "SELECT COUNT(*) FROM public.silver_seller_score_cancellations WHERE source_system = 'marketplace'",
+    }
+    counts = {}
+    for name, query in checks.items():
+        cur.execute(query)
+        counts[name] = cur.fetchone()[0]
+
+    mapping_checks = {
+        "dispatch": "silver_seller_score_dispatch",
+        "reviews": "silver_seller_score_reviews",
+        "inventory": "silver_seller_score_inventory",
+        "cancellations": "silver_seller_score_cancellations",
+    }
+    unmapped = {}
+    for name, table in mapping_checks.items():
+        cur.execute(
+            f"""
+            SELECT COUNT(*)
+            FROM public.{table} source
+            LEFT JOIN public.dim_seller_source_key key
+              ON key.source_system = source.source_system
+             AND key.source_seller_id = source.source_seller_id
+            WHERE source.source_system = %s
+              AND key.seller_id IS NULL
+            """,
+            ("olist" if name == "reviews" else "inventory_api" if name == "inventory" else "marketplace",),
+        )
+        unmapped[name] = cur.fetchone()[0]
     cur.close()
     conn.close()
-    print(f"[RN-07] Calculated scores for {inserted} sellers")
-    return inserted
+
+    empty = [name for name, count in counts.items() if count == 0]
+    if empty:
+        raise ValueError(
+            "Seller score Silver tables are not ready: " + ", ".join(empty)
+        )
+    unresolved = [name for name, count in unmapped.items() if count]
+    if unresolved:
+        raise ValueError(
+            "Seller score source IDs have no dim_seller mapping: "
+            + ", ".join(f"{name}={unmapped[name]}" for name in unresolved)
+        )
+
+    print(f"[PRE-CHECK] Seller score source row counts: {counts}; unmapped: {unmapped}")
+    return {"counts": counts, "unmapped": unmapped}
+
+
+def seller_score_inputs_ready(**context):
+    """Wait until source rows exist and every source seller ID is mapped."""
+    pg_hook = PostgresHook(postgres_conn_id="pos_db")
+    checks = (
+        "SELECT COUNT(*) FROM public.dim_seller",
+        "SELECT COUNT(*) FROM public.dim_seller_source_key",
+        "SELECT COUNT(*) FROM public.silver_seller_score_dispatch WHERE source_system = 'marketplace'",
+        "SELECT COUNT(*) FROM public.silver_seller_score_reviews WHERE source_system = 'olist'",
+        "SELECT COUNT(*) FROM public.silver_seller_score_inventory WHERE source_system = 'inventory_api'",
+        "SELECT COUNT(*) FROM public.silver_seller_score_cancellations WHERE source_system = 'marketplace'",
+    )
+    conn = pg_hook.get_conn()
+    try:
+        with conn.cursor() as cur:
+            for query in checks:
+                cur.execute(query)
+                if cur.fetchone()[0] == 0:
+                    return False
+
+            source_tables = (
+                ("silver_seller_score_dispatch", "marketplace"),
+                ("silver_seller_score_reviews", "olist"),
+                ("silver_seller_score_inventory", "inventory_api"),
+                ("silver_seller_score_cancellations", "marketplace"),
+            )
+            for table, source_system in source_tables:
+                cur.execute(
+                    f"""
+                    SELECT 1
+                    FROM public.{table} source
+                    LEFT JOIN public.dim_seller_source_key key
+                      ON key.source_system = source.source_system
+                     AND key.source_seller_id = source.source_seller_id
+                    WHERE source.source_system = %s
+                      AND key.seller_id IS NULL
+                    LIMIT 1
+                    """,
+                    (source_system,),
+                )
+                if cur.fetchone() is not None:
+                    return False
+    finally:
+        conn.close()
+    return True
+
 
 def update_seller_status(**context):
-    """
-    RN-08: Seller with score < 60 for 2 consecutive weeks -> "under observation".
-    Seller with score < 45 for 2 consecutive weeks -> "suspended".
-    A suspended seller cannot receive new orders.
-    Connects to Postgres (RDS): merca_pos.
-    """
+    """Apply RN-08 from the two most recent weekly scores written by Spark."""
     pg_hook = PostgresHook(postgres_conn_id="pos_db")
     conn = pg_hook.get_conn()
     cur = conn.cursor()
-
     cur.execute(
         """
-        INSERT INTO gold_seller_status (seller_id, status, reason, updated_at)
-        SELECT gs.seller_id,
-            CASE
-                WHEN gs.consecutive_weeks_low_score >= 2 AND gs.latest_score < 45 THEN 'suspended'
-                WHEN gs.consecutive_weeks_low_score >= 2 AND gs.latest_score < 60 THEN 'under_observation'
-                ELSE gs.status
-            END AS new_status,
-            CASE
-                WHEN gs.latest_score < 45 THEN 'Score below 45 for 2 consecutive weeks'
-                WHEN gs.latest_score < 60 THEN 'Score below 60 for 2 consecutive weeks'
-                ELSE 'active'
-            END,
-        NOW()
-        FROM (
+        WITH ranked_scores AS (
+            SELECT seller_id, week_start, score,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY seller_id ORDER BY week_start DESC
+                   ) AS week_rank
+            FROM public.gold_seller_score_history
+            WHERE week_start >= date_trunc('week', CURRENT_DATE - INTERVAL '7 days')::date
+        ),
+        recent_scores AS (
             SELECT seller_id,
-                COUNT(*) FILTER (WHERE score < 60) OVER (PARTITION BY seller_id ORDER BY week_start ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) AS consecutive_weeks_low_score,
-                FIRST_VALUE(score) OVER (PARTITION BY seller_id ORDER BY week_start DESC) AS latest_score,
-                LAG(status) OVER (PARTITION BY seller_id ORDER BY week_start DESC) AS status
-            FROM gold_seller_score_weekly
-            WHERE week_start >= CURRENT_DATE - INTERVAL '14 days'
-        ) gs
-        WHERE gs.latest_score IS NOT NULL
-        ON CONFLICT (seller_id)
-        DO UPDATE SET status = EXCLUDED.status,
-                    reason = EXCLUDED.reason,
-                    updated_at = NOW()
+                   COUNT(*) AS weeks_available,
+                   MAX(score) FILTER (WHERE week_rank = 1) AS latest_score,
+                   MAX(score) FILTER (WHERE week_rank = 2) AS previous_score
+            FROM ranked_scores
+            WHERE week_rank <= 2
+            GROUP BY seller_id
+        )
+        INSERT INTO public.gold_seller_status (seller_id, status, reason, updated_at)
+        SELECT seller_id,
+               CASE
+                   WHEN weeks_available = 2 AND latest_score < 45 AND previous_score < 45
+                       THEN 'suspended'
+                   WHEN weeks_available = 2 AND latest_score < 60 AND previous_score < 60
+                       THEN 'under_observation'
+                   ELSE 'active'
+               END,
+               CASE
+                   WHEN weeks_available = 2 AND latest_score < 45 AND previous_score < 45
+                       THEN 'Score below 45 for two consecutive weeks'
+                   WHEN weeks_available = 2 AND latest_score < 60 AND previous_score < 60
+                       THEN 'Score below 60 for two consecutive weeks'
+                   ELSE 'active'
+               END,
+               NOW()
+        FROM recent_scores
+        ON CONFLICT (seller_id) DO UPDATE
+        SET status = EXCLUDED.status,
+            reason = EXCLUDED.reason,
+            updated_at = EXCLUDED.updated_at
         """
     )
     updated = cur.rowcount
     conn.commit()
     cur.close()
     conn.close()
-    print(f"[RN-08] Updated status for {updated} sellers")
+    print(f"[RN-08] Updated status for {updated} sellers.")
     return updated
+
 
 with DAG(
     dag_id="seller_scoring",
     default_args=default_args,
-    description="Seller scoring and status management (RN-07, RN-08) in Gold layer.",
+    description="Weekly seller scoring with PySpark and RN-08 status management.",
     schedule="@weekly",
     start_date=pendulum.datetime(2026, 1, 1, tz="America/Bogota"),
     catchup=False,
     max_active_runs=1,
-    tags=["layer:gold", "seller", "scoring", "compliance", "mercaandes"],
+    tags=["layer:gold", "seller", "scoring", "mercaandes"],
     doc_md="""
-    # Evaluación Semanal y Estatus de Vendedores (MercaAndes)
-    
-    1. **Validación previa**: Confirma existencia de vendedores y métricas operacionales.
-    2. **TaskGroup: `seller_evaluation_workflow`**:
-       - `RN-07`: Pondera el Score 0-100 (40% Despacho a tiempo, 30% Calificaciones, 20% Exactitud de inventario, 10% Tasa inversa de cancelación).
-       - `RN-08`: Actualiza el estado del vendedor (Activo / En Observación / Suspendido).
+    # Evaluación semanal de vendedores
+
+    Airflow espera los datos Silver (liberando el worker mientras espera),
+    valida sus identificadores, ejecuta el contenedor del job PySpark y,
+    cuando este termina correctamente, aplica RN-08 usando el historial semanal
+    guardado en Gold. El puntaje vigente queda en `gold_seller_score` para la API.
     """,
 ) as dag:
+    start_scoring = EmptyOperator(task_id="start_scoring")
 
-    start_scoring = EmptyOperator(
-        task_id="start_scoring",
-        doc_md="Inicio del ciclo semanal de evaluación de vendedores.",
+    t_wait_for_inputs = PythonSensor(
+        task_id="wait_for_seller_score_inputs",
+        python_callable=seller_score_inputs_ready,
+        poke_interval=300,
+        timeout=7 * 24 * 60 * 60,
+        mode="reschedule",
+        doc_md=(
+            "Espera hasta siete días a que existan vendedores y registros en las "
+            "cuatro fuentes Silver, y a que todas las claves naturales tengan una "
+            "equivalencia válida en dim_seller_source_key. En modo reschedule no "
+            "ocupa un worker entre consultas."
+        ),
     )
 
     t_validate = PythonOperator(
         task_id="validate_scoring_prerequisites",
         python_callable=validate_scoring_prerequisites,
-        doc_md="Verifica integridad de datos antes de calcular puntuaciones.",
     )
 
-    with TaskGroup("seller_evaluation_workflow", tooltip="Cálculo de Score (RN-07) y Asignación de Estatus (RN-08)") as tg_scoring:
-        t_score = PythonOperator(
-            task_id="rn_07_calculate_seller_score",
-            python_callable=calculate_seller_score,
-            doc_md="Calcula score ponderado de 0 a 100.",
-        )
-
-        t_status = PythonOperator(
-            task_id="rn_08_update_seller_status",
-            python_callable=update_seller_status,
-            doc_md="Asigna estatus activo, en observación o suspendido según histórico.",
-        )
-
-        t_score >> t_status
-
-    end_scoring = EmptyOperator(
-        task_id="end_scoring",
-        doc_md="Finalización exitosa del ciclo de evaluación de vendedores.",
+    t_ingest_marketplace = DockerOperator(
+        task_id="ingest_marketplace_seller_events",
+        image=os.getenv(
+            "SELLER_SCORE_INGESTION_IMAGE", "mercaandes-seller-score-ingestion:local"
+        ),
+        docker_url="unix://var/run/docker.sock",
+        network_mode=os.getenv("SELLER_SCORE_DOCKER_NETWORK", "mercaandes-seller-score"),
+        environment={
+            "KAFKA_BOOTSTRAP_SERVERS": "kafka:29092",
+            "KAFKA_TOPIC_ORDERS": os.getenv(
+                "KAFKA_TOPIC_ORDERS", "mercaandes.orders.events"
+            ),
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": os.getenv("POS_DB_NAME", "merca_pos"),
+            "POSTGRES_USER": os.getenv("POS_DB_USER", "pos_user"),
+            "POSTGRES_PASSWORD": os.getenv("POS_DB_PASSWORD", ""),
+        },
+        auto_remove="success",
+        mount_tmp_dir=False,
+        execution_timeout=timedelta(minutes=15),
+        doc_md="Carga eventos pendientes de Kafka a las tablas Silver de Marketplace.",
     )
 
-    start_scoring >> t_validate >> tg_scoring >> end_scoring
+    t_load_reviews = PythonOperator(
+        task_id="load_olist_seller_reviews",
+        python_callable=load_olist_seller_reviews,
+        doc_md=(
+            "Carga reseñas del CSV histórico Olist disponible en inputs/f1_kaggle. "
+            "Solo atribuye reseñas a órdenes con un único vendedor."
+        ),
+    )
+
+    t_prepare_simulated_inputs = PythonOperator(
+        task_id="map_seller_ids_and_prepare_inventory_accuracy",
+        python_callable=prepare_simulated_seller_score_inputs,
+        doc_md=(
+            "Agrupa las claves simuladas por país y tipo de vendedor. Las etiquetas "
+            "de precisión de inventario son deterministas y simuladas, porque el "
+            "catálogo API no guarda conteos reales contra los que comparar."
+        ),
+    )
+
+    t_score = DockerOperator(
+        task_id="rn_07_calculate_seller_score_spark",
+        image=os.getenv("SELLER_SCORE_DOCKER_IMAGE", "mercaandes-seller-score-job:local"),
+        docker_url="unix://var/run/docker.sock",
+        network_mode=os.getenv("SELLER_SCORE_DOCKER_NETWORK", "mercaandes-seller-score"),
+        environment={
+            "POSTGRES_HOST": "postgres",
+            "POSTGRES_PORT": "5432",
+            "POSTGRES_DB": os.getenv("POS_DB_NAME", "merca_pos"),
+            "POSTGRES_USER": os.getenv("POS_DB_USER", "pos_user"),
+            "POSTGRES_PASSWORD": os.getenv("POS_DB_PASSWORD", ""),
+        },
+        auto_remove="success",
+        mount_tmp_dir=False,
+        execution_timeout=timedelta(minutes=60),
+        doc_md="Ejecuta el cálculo RN-07 en Spark y persiste el resultado en Gold.",
+    )
+
+    t_status = PythonOperator(
+        task_id="rn_08_update_seller_status",
+        python_callable=update_seller_status,
+        doc_md="Actualiza el estado según dos resultados semanales consecutivos.",
+    )
+    end_scoring = EmptyOperator(task_id="end_scoring")
+
+    start_scoring >> [t_ingest_marketplace, t_load_reviews] >> t_prepare_simulated_inputs >> t_wait_for_inputs
+    t_wait_for_inputs >> t_validate >> t_score >> t_status >> end_scoring
