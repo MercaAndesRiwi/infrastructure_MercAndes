@@ -161,25 +161,34 @@ Access the Airflow UI at `http://localhost:8080` to orchestrate data lake transf
 [5. f7_promotions_weekly]          (@weekly - Weekly promotions ingestion & silent store alerts)
 ```
 
-El DAG `seller_scoring` se ejecuta semanalmente. Primero consume los eventos pendientes de Marketplace desde Kafka y carga reseñas del CSV histórico Olist para órdenes con un solo vendedor. Después espera los datos de inventario y las equivalencias de IDs, valida las entradas Silver, inicia Spark y actualiza el estado del vendedor. El cálculo SQL anterior del puntaje fue retirado para que RN-07 tenga una sola implementación.
+The `seller_scoring` DAG runs weekly. It prepares its inputs, checks that seller IDs are mapped, runs the Spark calculation, and updates seller status. To run it immediately, trigger it from the Airflow UI.
 
 ---
 
-## 6. Seller score job (US-07)
+## 6. Seller scoring
 
-The Spark transformation remains in `MercaAndes_Spark_Gold_Transformations`. This repository adds its Docker runtime, creates `gold_seller_score` in the shared PostgreSQL database, and lets the API read that persisted result. The dimension table remains `public.dim_seller`; the score output is stored separately in `public.gold_seller_score`.
+The weekly `seller_scoring` DAG calculates seller scores in Spark. The current score is saved in PostgreSQL and can be read from the Inventory API at `GET /api/v1/sellers/{seller_id}/score`.
 
-The job runtime uses a Python 3.11 virtual environment created with `uv`, Java 17, PySpark 3.5.1, and psycopg2 2.9.9. The versions match the Spark project. The current score job uses Spark local mode, matching its existing Spark session configuration. Airflow workers use the Docker socket to start the short-lived job container; therefore they have permission to manage containers through the local Docker engine.
+| Term | Meaning in this platform |
+| --- | --- |
+| Silver inputs | PostgreSQL tables containing dispatch, reviews, inventory checks, and cancellations. |
+| `dim_seller_source_key` | Maps a source seller ID to the UUID used in `dim_seller`. For demo data, IDs may share a country/type group and score. |
+| JDBC | The connector Spark uses to read and write PostgreSQL tables. |
+| Staging table | An intermediate table Spark writes; the job copies its rows to Gold and then removes it. |
 
-The job reads relational Silver tables through JDBC; no Parquet files are required. Marketplace events are landed idempotently in PostgreSQL by a small Uv-based service, then materialized as dispatch and cancellation rows. Olist reviews are loaded from the existing historical CSVs, and reviews from orders with multiple sellers are skipped. Since the simulated catalogs do not share seller identities, Airflow maps source IDs to a common `(country, seller_type)` cohort UUID in `public.dim_seller_source_key`. The Inventory API has no stock count history, so Airflow creates deterministic simulated accuracy observations. If Kafka has no Marketplace events, repeatable sample dispatch and cancellation rows keep the demo runnable. These rules are for simulated data, not production identity resolution or measured stockout rates. Details are in [`inputs/seller_score/README.md`](inputs/seller_score/README.md).
+Inventory accuracy and sample Marketplace records are simulated for the local demo. They are inputs to the score, not measurements from a real inventory audit.
 
-Start the platform, including the Uv-based Spark runtime, with:
+### Run and check the score
 
-```bash
-docker compose up -d --build
-```
+1. Open Airflow at [http://localhost:8080](http://localhost:8080), find `seller_scoring`, and choose **Trigger DAG**.
+2. Confirm the tasks finish successfully, including the Spark task.
+3. Query the Inventory API using a seeded seller ID, for example:
 
-The `seller_scoring` DAG is enabled on creation and runs weekly. After its first successful run, query `GET /api/v1/sellers/{seller_id}/score` with an API `SEL-*` ID or mapped `dim_seller` UUID. IDs in the same country/type cohort intentionally return the same demo score. A seller without a score returns `404`; if the score table is unavailable, the API returns `503`.
+   ```bash
+   curl http://localhost:8002/api/v1/sellers/SEL-001/score
+   ```
+
+The response contains the saved score, its four components, and the calculation timestamp. If no score has been written yet, the API returns `404`.
 
 ## 7. Stopping the Platform
 
