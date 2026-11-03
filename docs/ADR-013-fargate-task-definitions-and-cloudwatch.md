@@ -8,9 +8,7 @@
 ---
 
 ## Context
-
 Following the foundation established in ADR-012 (which provisioned the ECS cluster, dedicated EC2 compute nodes for Batch/Streaming, and the public Application Load Balancer), the platform requires:
-
 1. Packaging and defining the runtime specifications for the operational APIs (Marketplace API and Inventory API) as serverless tasks on AWS Fargate.
 2. Establishing a centralized logging and observability architecture across all five core decoupled platform engines (Marketplace API, Inventory API, Promotions API, Batch Node, and Streaming Node).
 3. Enforcing automated health checks (/health on port 8000) for seamless integration with the ALB target group (tg-apis-fargate).
@@ -18,7 +16,6 @@ Following the foundation established in ADR-012 (which provisioned the ECS clust
 ---
 
 ## Decision Drivers
-
 1. **Workload Isolation & Operational Simplicity:** Stateless APIs must scale independently without consuming CPU/memory from persistent Spark or Kafka workloads.
 2. **Strict Observability:** Centralized, durable log aggregation for distributed troubleshooting and incident triage.
 3. **Automated Eviction:** Automatic failover via HTTP health checks on port 8000.
