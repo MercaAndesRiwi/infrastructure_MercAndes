@@ -14,8 +14,7 @@ import os
 from datetime import datetime, timedelta
 
 import boto3
-from airflow import DAG
-from airflow.operators.python import PythonOperator
+from airflow.decorators import dag, task
 from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
 from airflow.utils.task_group import TaskGroup
 
@@ -44,62 +43,7 @@ F1_KAGGLE_FOLDER = os.getenv("S3_F1_KAGGLE_FOLDER", "f1_kaggle")
 SPARK_MASTER = os.getenv("SPARK_MASTER_URL", "spark://spark-master:7077")
 
 
-def upload_local_f1_to_s3(**context):
-    """
-    Ingests Kaggle Olist CSV files to S3 Bronze.
-    Resilient for AWS:
-    - If local directory has files, uploads them to S3 Bronze.
-    - If running on ECS Fargate worker, verifies files already in S3 Bronze landing.
-    """
-    s3 = boto3.client("s3")
-    execution_date = context["ds"]
-    local_path = os.path.join(F1_KAGGLE_LOCAL_INPUT_PATH)
-
-    uploaded_files = []
-    if os.path.exists(local_path):
-        for fname in sorted(os.listdir(local_path)):
-            if fname.endswith(".csv"):
-                local_file = os.path.join(local_path, fname)
-                s3_key = f"{BRONZE_FOLDER}/{F1_KAGGLE_FOLDER}/{execution_date}/{fname}"
-                s3.upload_file(local_file, BUCKET, s3_key)
-                uploaded_files.append(s3_key)
-
-    if uploaded_files:
-        print(f"[F1 Kaggle] Subidos {len(uploaded_files)} archivos a s3://{BUCKET}/{BRONZE_FOLDER}/{F1_KAGGLE_FOLDER}/{execution_date}/")
-    else:
-        # Modo AWS ECS: Verificar si ya existen archivos en S3
-        prefix = f"{BRONZE_FOLDER}/{F1_KAGGLE_FOLDER}/"
-        response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix, MaxKeys=20)
-        found = [obj["Key"] for obj in response.get("Contents", []) if obj["Key"].endswith(".csv")]
-        if found:
-            print(f"[F1 Kaggle AWS] Confirmada existencia de {len(found)} datasets en S3 Bronze.")
-            uploaded_files = found
-        else:
-            print(f"[F1 Kaggle Info] No se encontraron archivos locales en {local_path} ni en s3://{BUCKET}/{prefix}. Verifique el volumen o S3.")
-
-    return {"files_count": len(uploaded_files), "bucket": BUCKET}
-
-
-def validate_f1_bronze_datasets(**context):
-    """Data Quality Check: Validates that essential Olist tables exist in Bronze."""
-    s3 = boto3.client("s3")
-    prefix = f"{BRONZE_FOLDER}/{F1_KAGGLE_FOLDER}/"
-    response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
-    keys = [item["Key"] for item in response.get("Contents", [])]
-
-    expected = ["customers", "orders", "order_items", "products"]
-    found_expected = []
-    for exp in expected:
-        for k in keys:
-            if exp in k.lower():
-                found_expected.append(exp)
-                break
-
-    print(f"[F1 VALIDATION] Datasets esenciales encontrados en S3 Bronze: {set(found_expected)}")
-    return len(keys) > 0
-
-
-with DAG(
+@dag(
     dag_id="f1_kaggle_historical_load",
     default_args=default_args,
     description="One-time definitive load of Kaggle F1 (Olist) to S3 Bronze + Spark Silver initialization.",
@@ -115,7 +59,61 @@ with DAG(
     2. **Quality Validation**: Checks for critical datasets (customers, orders, items, products).
     3. **Spark Bronze -> Silver**: Initializes net sales and inventory transformations.
     """,
-) as dag:
+)
+def f1_kaggle_historical_load():
+    @task(task_id="upload_local_f1_to_s3")
+    def upload_local_f1_to_s3(**context):
+        """
+        Ingests Kaggle Olist CSV files to S3 Bronze.
+        Resilient for AWS:
+        - If local directory has files, uploads them to S3 Bronze.
+        - If running on ECS Fargate worker, verifies files already in S3 Bronze landing.
+        """
+        s3 = boto3.client("s3")
+        execution_date = context["ds"]
+        local_path = os.path.join(F1_KAGGLE_LOCAL_INPUT_PATH)
+
+        uploaded_files = []
+        if os.path.exists(local_path):
+            for fname in sorted(os.listdir(local_path)):
+                if fname.endswith(".csv"):
+                    local_file = os.path.join(local_path, fname)
+                    s3_key = f"{BRONZE_FOLDER}/{F1_KAGGLE_FOLDER}/{execution_date}/{fname}"
+                    s3.upload_file(local_file, BUCKET, s3_key)
+                    uploaded_files.append(s3_key)
+
+        if uploaded_files:
+            print(f"[F1 Kaggle] Uploaded {len(uploaded_files)} files to s3://{BUCKET}/{BRONZE_FOLDER}/{F1_KAGGLE_FOLDER}/{execution_date}/")
+        else:
+            prefix = f"{BRONZE_FOLDER}/{F1_KAGGLE_FOLDER}/"
+            response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix, MaxKeys=20)
+            found = [obj["Key"] for obj in response.get("Contents", []) if obj["Key"].endswith(".csv")]
+            if found:
+                print(f"[F1 Kaggle AWS] Confirmed {len(found)} datasets exist in S3 Bronze.")
+                uploaded_files = found
+            else:
+                print(f"[F1 Kaggle Info] No local files found in {local_path} or s3://{BUCKET}/{prefix}. Check volumes or S3.")
+
+        return {"files_count": len(uploaded_files), "bucket": BUCKET}
+
+    @task(task_id="validate_f1_bronze_datasets")
+    def validate_f1_bronze_datasets(**context):
+        """Data Quality Check: Validates that essential Olist tables exist in Bronze."""
+        s3 = boto3.client("s3")
+        prefix = f"{BRONZE_FOLDER}/{F1_KAGGLE_FOLDER}/"
+        response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
+        keys = [item["Key"] for item in response.get("Contents", [])]
+
+        expected = ["customers", "orders", "order_items", "products"]
+        found_expected = []
+        for exp in expected:
+            for k in keys:
+                if exp in k.lower():
+                    found_expected.append(exp)
+                    break
+
+        print(f"[F1 VALIDATION] Essential datasets found in S3 Bronze: {set(found_expected)}")
+        return len(keys) > 0
 
     start_f1_load = EmptyOperator(
         task_id="start_f1_load",
@@ -123,18 +121,8 @@ with DAG(
     )
 
     with TaskGroup("f1_ingestion_and_validation", tooltip="File upload and validation in S3 Bronze") as tg_f1:
-        t_upload = PythonOperator(
-            task_id="upload_local_f1_to_s3",
-            python_callable=upload_local_f1_to_s3,
-            doc_md="Uploads Olist datasets to S3 Bronze.",
-        )
-
-        t_validate = PythonOperator(
-            task_id="validate_f1_bronze_datasets",
-            python_callable=validate_f1_bronze_datasets,
-            doc_md="Validates that required datasets exist in S3 Bronze.",
-        )
-
+        t_upload = upload_local_f1_to_s3()
+        t_validate = validate_f1_bronze_datasets()
         t_upload >> t_validate
 
     t_spark_init = SparkSubmitOperator(
@@ -161,3 +149,6 @@ with DAG(
     )
 
     start_f1_load >> tg_f1 >> t_spark_init >> end_f1_load
+
+
+f1_kaggle_historical_dag = f1_kaggle_historical_load()
