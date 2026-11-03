@@ -17,6 +17,34 @@ services:
       retries: 10
       start_period: 10s
     restart: unless-stopped
+    networks: [default, seller-score]
+
+  gold-seller-score-schema:
+    image: postgres:16-alpine
+    container_name: platform-gold-seller-score-schema
+    env_file: [.env]
+    environment:
+      PGPASSWORD: ${POS_DB_PASSWORD}
+    volumes:
+      - ./postgres/ddl/03-gold-seller-score.sql:/gold-seller-score.sql:ro
+    command:
+      - psql
+      - -h
+      - postgres
+      - -U
+      - ${POS_DB_USER}
+      - -d
+      - ${POS_DB_NAME}
+      - -v
+      - ON_ERROR_STOP=1
+      - -f
+      - /gold-seller-score.sql
+    depends_on:
+      postgres:
+        condition: service_healthy
+      pos-database:
+        condition: service_completed_successfully
+    restart: "no"
 
   rabbitmq:
     image: rabbitmq:3.13-management
@@ -55,6 +83,7 @@ services:
       KAFKA_LOG_RETENTION_HOURS: ${KAFKA_RETENTION_HOURS:-168}
     volumes: [kafka-data:/var/lib/kafka/data]
     restart: unless-stopped
+    networks: [default, seller-score]
     healthcheck:
       test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092 || exit 1"]
       interval: 10s
@@ -108,6 +137,56 @@ services:
       - ../MercaAndes_Spark_Gold_Transformations:/opt/mercaandes:ro
     restart: unless-stopped
 
+  seller-score-job:
+    image: mercaandes-seller-score-job:local
+    build:
+      context: ../MercaAndes_Spark_Gold_Transformations
+      dockerfile: Dockerfile.seller-score
+    container_name: platform-seller-score-job
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POS_DB_NAME}
+      POSTGRES_USER: ${POS_DB_USER}
+      POSTGRES_PASSWORD: ${POS_DB_PASSWORD}
+    entrypoint: ["sleep", "infinity"]
+    networks:
+      - seller-score
+    depends_on:
+      postgres:
+        condition: service_healthy
+      gold-seller-score-schema:
+        condition: service_completed_successfully
+    restart: "no"
+
+  seller-score-ingestion-job:
+    image: mercaandes-seller-score-ingestion:local
+    build:
+      context: ./services/seller-score-ingestion
+      dockerfile: Dockerfile
+    container_name: platform-seller-score-ingestion-job
+    env_file: [.env]
+    environment:
+      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_TOPIC_ORDERS: ${KAFKA_TOPIC_ORDERS:-mercaandes.orders.events}
+      KAFKA_SELLER_SCORE_GROUP: seller-score-silver
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: ${POS_DB_NAME}
+      POSTGRES_USER: ${POS_DB_USER}
+      POSTGRES_PASSWORD: ${POS_DB_PASSWORD}
+    entrypoint: ["sleep", "infinity"]
+    networks: [seller-score]
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      gold-seller-score-schema:
+        condition: service_completed_successfully
+    restart: "no"
+
   airflow-init:
     image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.1.5}
     container_name: platform-airflow-init
@@ -120,11 +199,13 @@ services:
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-EKyfNdB6Cga5CvKcvdhSSjKAyIiQ0yz076Q9IdJsho0}
       _AIRFLOW_DB_MIGRATE: "true"
       _AIRFLOW_WWW_USER_CREATE: "true"
       _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_ADMIN_USER:-airflow}
       _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_ADMIN_PASSWORD}
-      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
@@ -147,6 +228,8 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
       AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-EKyfNdB6Cga5CvKcvdhSSjKAyIiQ0yz076Q9IdJsho0}
       S3_DATA_LAKE_BUCKET_NAME: ${S3_DATA_LAKE_BUCKET_NAME}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -159,7 +242,7 @@ services:
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
       AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
-      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
@@ -186,6 +269,8 @@ services:
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
       AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
       AIRFLOW__SCHEDULER__MIN_FILE_PROCESS_INTERVAL: 30
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-EKyfNdB6Cga5CvKcvdhSSjKAyIiQ0yz076Q9IdJsho0}
       S3_DATA_LAKE_BUCKET_NAME: ${S3_DATA_LAKE_BUCKET_NAME}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -198,7 +283,7 @@ services:
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
       AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
-      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
@@ -222,7 +307,9 @@ services:
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-EKyfNdB6Cga5CvKcvdhSSjKAyIiQ0yz076Q9IdJsho0}
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
@@ -257,11 +344,17 @@ services:
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
       AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
-      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-EKyfNdB6Cga5CvKcvdhSSjKAyIiQ0yz076Q9IdJsho0}
+      SELLER_SCORE_DOCKER_NETWORK: mercaandes-seller-score
+      SELLER_SCORE_DOCKER_IMAGE: mercaandes-seller-score-job:local
+      SELLER_SCORE_INGESTION_IMAGE: mercaandes-seller-score-ingestion:local
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
       - ./airflow/logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./inputs/f7_promotions:/opt/inputs/f7_promotions:ro
       - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
     command: celery worker
@@ -269,6 +362,9 @@ services:
       rabbitmq: {condition: service_healthy}
       postgres: {condition: service_healthy}
       airflow-init: {condition: service_completed_successfully}
+    networks:
+      - default
+      - seller-score
     restart: unless-stopped
 
   airflow-worker-2:
@@ -293,11 +389,17 @@ services:
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
       AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
-      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres pika boto3 pandas openpyxl}
+      _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
+      AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
+      AIRFLOW__API_AUTH__JWT_SECRET: ${AIRFLOW__API_AUTH__JWT_SECRET:-EKyfNdB6Cga5CvKcvdhSSjKAyIiQ0yz076Q9IdJsho0}
+      SELLER_SCORE_DOCKER_NETWORK: mercaandes-seller-score
+      SELLER_SCORE_DOCKER_IMAGE: mercaandes-seller-score-job:local
+      SELLER_SCORE_INGESTION_IMAGE: mercaandes-seller-score-ingestion:local
     volumes:
       - ./airflow/dags:/opt/airflow/dags
       - ./services/operational-messaging/src/operational_messaging:/opt/airflow/dags/operational_messaging:ro
       - ./airflow/logs:/opt/airflow/logs
+      - /var/run/docker.sock:/var/run/docker.sock
       - ./inputs/f7_promotions:/opt/inputs/f7_promotions:ro
       - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
     command: celery worker
@@ -305,6 +407,7 @@ services:
       rabbitmq: {condition: service_healthy}
       postgres: {condition: service_healthy}
       airflow-init: {condition: service_completed_successfully}
+    networks: [default, seller-score]
     restart: unless-stopped
 
   airflow-flower:
@@ -362,6 +465,7 @@ services:
       TARGET_CURRENCIES: "${TARGET_CURRENCIES:-COP,PEN,BOB,CLP}"
     depends_on:
       postgres: {condition: service_healthy}
+      pos-database: {condition: service_completed_successfully}
     restart: "no"
 
   holidays-seed:
@@ -381,6 +485,7 @@ services:
       COUNTRY_CODES: "${COUNTRY_CODES:-CO,PE,EC,BO,CL}"
     depends_on:
       postgres: {condition: service_healthy}
+      pos-database: {condition: service_completed_successfully}
     restart: "no"
 
   inventory-api:
@@ -401,6 +506,7 @@ services:
     ports: ["${INVENTORY_API_PORT:-8002}:8000"]
     depends_on:
       postgres: {condition: service_healthy}
+      gold-seller-score-schema: {condition: service_completed_successfully}
     restart: unless-stopped
 
   marketplace-api:
@@ -539,3 +645,6 @@ volumes:
   spark-work:
   alerts-data:
   reports-data:
+networks:
+  seller-score:
+    name: mercaandes-seller-score

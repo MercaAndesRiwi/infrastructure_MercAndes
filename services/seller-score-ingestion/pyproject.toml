@@ -1,0 +1,16 @@
+[project]
+name = "seller-score-ingestion"
+version = "0.1.0"
+description = "Loads Marketplace lifecycle events into seller-score Silver tables."
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "kafka-python==2.2.15",
+    "psycopg[binary]==3.2.9",
+]
+
+[dependency-groups]
+dev = ["pytest==8.3.5"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
