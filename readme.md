@@ -179,7 +179,7 @@ Start the platform, including the Uv-based Spark runtime, with:
 docker compose up -d --build
 ```
 
-Airflow creates new DAGs paused by default in this Compose setup. Unpause `seller_scoring` in the Airflow UI to enable its weekly schedule. After the DAG writes a row, query `GET /api/v1/sellers/{seller_id}/score` with an API `SEL-*` ID or mapped `dim_seller` UUID. IDs in the same country/type cohort intentionally return the same demo score. A seller without a score returns `404`; if the score table is unavailable, the API returns `503`.
+The `seller_scoring` DAG is enabled on creation and runs weekly. After its first successful run, query `GET /api/v1/sellers/{seller_id}/score` with an API `SEL-*` ID or mapped `dim_seller` UUID. IDs in the same country/type cohort intentionally return the same demo score. A seller without a score returns `404`; if the score table is unavailable, the API returns `503`.
 
 ## 7. Stopping the Platform
 
