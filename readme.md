@@ -76,6 +76,8 @@ Docker will automatically:
 4. Start Apache Kafka and create the required order topics.
 5. Launch the Spark cluster, Airflow orchestrator, and the Marketplace API.
 
+The same startup also applies the idempotent `gold_seller_score` schema to the shared PostgreSQL database. This works with both a new database volume and an existing volume. The Inventory API starts after that schema step completes.
+
 ---
 
 ## 3. Real Customer Purchase & Email Dispatch
@@ -126,16 +128,15 @@ docker logs -f platform-notification-worker
 
 Once the platform is running, access all services via your browser:
 
-
-| Service                 | Web URL                                                  | Credentials / Notes                                  |
-| :------------------------ | :--------------------------------------------------------- | :----------------------------------------------------- |
-| **Marketplace API**     | [http://localhost:8003/docs](http://localhost:8003/docs) | Interactive Swagger UI for purchases and orders (F4) |
-| **Inventory API**       | [http://localhost:8002/docs](http://localhost:8002/docs) | Stock and inventory lookup endpoint (F3)             |
-| **Airflow Web UI**      | [http://localhost:8080](http://localhost:8080)           | User: `airflow` / Password: `airflow`                |
-| **Airflow Flower**      | [http://localhost:5555](http://localhost:5555)           | Celery distributed worker monitor                    |
-| **Spark Master UI**     | [http://localhost:8081](http://localhost:8081)           | Apache Spark cluster status and jobs                 |
-| **RabbitMQ Management** | [http://localhost:15672](http://localhost:15672)         | User: `guest_user` / Password in `.env`              |
-| **Kafka UI (Kafdrop)**  | [http://localhost:9000](http://localhost:9000)           | Kafka topics, partitions, and message browser        |
+| Service                       | Web URL                                                 | Credentials / Notes                                              |
+| :---------------------------- | :------------------------------------------------------ | :--------------------------------------------------------------- |
+| **Marketplace API**     | [http://localhost:8003/docs](http://localhost:8003/docs) | Interactive Swagger UI for purchases and orders (F4)             |
+| **Inventory API**       | [http://localhost:8002/docs](http://localhost:8002/docs) | Stock and inventory lookup endpoint (F3)                         |
+| **Airflow Web UI**      | [http://localhost:8080](http://localhost:8080)           | User: `airflow` / Password: `MercaAndes2026!` (ver `.env`) |
+| **Airflow Flower**      | [http://localhost:5555](http://localhost:5555)           | Celery distributed worker monitor                                |
+| **Spark Master UI**     | [http://localhost:8081](http://localhost:8081)           | Apache Spark cluster status and jobs                             |
+| **RabbitMQ Management** | [http://localhost:15672](http://localhost:15672)         | User: `guest_user` / Password in `.env`                      |
+| **Kafka UI (Kafdrop)**  | [http://localhost:9000](http://localhost:9000)           | Kafka topics, partitions, and message browser                    |
 
 ---
 
@@ -153,15 +154,42 @@ Access the Airflow UI at `http://localhost:8080` to orchestrate data lake transf
 [3. silver_to_gold_business_rules] (@daily - Parallel execution: Stockout risk & Seller accuracy)
               │
               ▼
-[4. seller_scoring]                (@weekly - Seller performance scoring 0-100)
+[4. seller_scoring]                (@weekly - PySpark score + SQL seller status)
               │
               ▼
 [5. f7_promotions_weekly]          (@weekly - Weekly promotions ingestion & silent store alerts)
 ```
 
+The `seller_scoring` DAG runs weekly. It prepares its inputs, checks that seller IDs are mapped, runs the Spark calculation, and updates seller status. To run it immediately, trigger it from the Airflow UI.
+
 ---
 
-## 6. Stopping the Platform
+## 6. Seller scoring
+
+The weekly `seller_scoring` DAG calculates seller scores in Spark. The current score is saved in PostgreSQL and can be read from the Inventory API at `GET /api/v1/sellers/{seller_id}/score`.
+
+| Term                      | Meaning in this platform                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Silver inputs             | PostgreSQL tables containing dispatch, reviews, inventory checks, and cancellations.                                     |
+| `dim_seller_source_key` | Maps a source seller ID to the UUID used in `dim_seller`. For demo data, IDs may share a country/type group and score. |
+| JDBC                      | The connector Spark uses to read and write PostgreSQL tables.                                                            |
+| Staging table             | An intermediate table Spark writes; the job copies its rows to Gold and then removes it.                                 |
+
+Inventory accuracy and sample Marketplace records are simulated for the local demo. They are inputs to the score, not measurements from a real inventory audit.
+
+### Run and check the score
+
+1. Open Airflow at [http://localhost:8080](http://localhost:8080), find `seller_scoring`, and choose **Trigger DAG**.
+2. Confirm the tasks finish successfully, including the Spark task.
+3. Query the Inventory API using a seeded seller ID, for example:
+
+   ```bash
+   curl http://localhost:8002/api/v1/sellers/SEL-001/score
+   ```
+
+The response contains the saved score, its four components, and the calculation timestamp. If no score has been written yet, the API returns `404`.
+
+## 7. Stopping the Platform
 
 To stop all running containers cleanly:
 

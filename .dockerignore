@@ -1,0 +1,8 @@
+.git
+.env
+.uv-cache*
+.data
+inputs
+airflow/logs
+services/**/.venv
+**/__pycache__

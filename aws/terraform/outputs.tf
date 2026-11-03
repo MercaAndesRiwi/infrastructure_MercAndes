@@ -23,3 +23,29 @@ output "cloudwatch_log_groups" {
     streaming   = aws_cloudwatch_log_group.streaming_node.name
   }
 }
+
+# --- RDS PostgreSQL Outputs (SCRUM-95 & SCRUM-98) ---
+output "rds_endpoint" {
+  description = "Connection endpoint for the RDS PostgreSQL Gold serving layer"
+  value       = aws_db_instance.postgres.endpoint
+}
+
+output "rds_address" {
+  description = "Hostname of the RDS PostgreSQL instance"
+  value       = aws_db_instance.postgres.address
+}
+
+output "rds_port" {
+  description = "Port of the RDS PostgreSQL instance"
+  value       = aws_db_instance.postgres.port
+}
+
+output "rds_database_name" {
+  description = "Name of the Gold serving database"
+  value       = aws_db_instance.postgres.db_name
+}
+
+output "rds_security_group_id" {
+  description = "ID of the RDS security group (sg-rds)"
+  value       = aws_security_group.rds.id
+}
