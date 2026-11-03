@@ -138,3 +138,47 @@ variable "health_check_path" {
   type        = string
   default     = "/health"
 }
+
+
+# --- EKS PoC Variables (SCRUM-180) ---
+variable "eks_cluster_name" {
+  description = "Name of the Amazon EKS cluster for the Sellers API PoC"
+  type        = string
+  default     = "mercaandes-eks-poc"
+}
+
+variable "eks_cluster_version" {
+  description = "Kubernetes control plane version for the EKS cluster"
+  type        = string
+  default     = "1.30"
+}
+
+variable "eks_subnet_ids" {
+  description = "Subnet IDs where the EKS cluster and nodes will be placed"
+  type        = list(string)
+  default     = ["subnet-private-az1", "subnet-private-az2"]
+}
+
+variable "eks_node_instance_types" {
+  description = "EC2 instance types for the EKS managed node group"
+  type        = list(string)
+  default     = ["t3.medium"]
+}
+
+variable "eks_node_desired_size" {
+  description = "Desired number of worker nodes for the PoC"
+  type        = number
+  default     = 1
+}
+
+variable "eks_node_min_size" {
+  description = "Minimum number of worker nodes for the PoC"
+  type        = number
+  default     = 1
+}
+
+variable "eks_node_max_size" {
+  description = "Maximum number of worker nodes for the PoC"
+  type        = number
+  default     = 2
+}
