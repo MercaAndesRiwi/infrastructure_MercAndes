@@ -82,7 +82,7 @@ def seller_score_inputs_ready(**context):
     default_args=default_args,
     description="Weekly seller scoring with PySpark and RN-08 status management.",
     schedule="0 10 * * 4",
-    start_date=datetime(2026, 11, 1, 0, 0),
+    start_date=datetime(2026, 11, 4, 14, 0),
     catchup=False,
     max_active_runs=1,
     is_paused_upon_creation=False,
