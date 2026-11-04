@@ -434,10 +434,41 @@ def seller_scoring():
     )
 
     t_status = update_seller_status()
+
+    @task(task_id="export_seller_score_to_s3")
+    def export_seller_score_to_s3(**context):
+        """Export computed Gold seller scores to AWS S3."""
+        import boto3
+        from airflow.providers.postgres.hooks.postgres import PostgresHook
+        try:
+            s3 = boto3.client("s3")
+            bucket = os.getenv("S3_DATA_LAKE_BUCKET_NAME", "mercaandes-data-lake")
+            pg_hook = PostgresHook(postgres_conn_id="pos_db")
+            conn = pg_hook.get_conn()
+            cur = conn.cursor()
+            for table in ["gold_seller_score", "gold_seller_status"]:
+                try:
+                    cur.execute(f"SELECT * FROM public.{table} LIMIT 1000;")
+                    cols = [desc[0] for desc in cur.description]
+                    rows = cur.fetchall()
+                    if rows:
+                        csv_data = ",".join(cols) + "\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
+                        key = f"gold/{table}.csv"
+                        s3.put_object(Bucket=bucket, Key=key, Body=csv_data.encode("utf-8"))
+                        print(f"[GOLD SELLER SCORE] Exported {len(rows)} records to s3://{bucket}/{key}")
+                except Exception as exc:
+                    print(f"[GOLD Warning] Could not export {table}: {exc}")
+            cur.close()
+            conn.close()
+        except Exception as exc:
+            print(f"[GOLD Warning] S3 export skipped: {exc}")
+        return True
+
+    t_export_score = export_seller_score_to_s3()
     end_scoring = EmptyOperator(task_id="end_scoring")
 
     start_scoring >> [t_ingest_marketplace, t_load_reviews] >> t_prepare_simulated_inputs >> t_wait_for_inputs
-    t_wait_for_inputs >> t_validate >> t_score >> t_status >> end_scoring
+    t_wait_for_inputs >> t_validate >> t_score >> t_status >> t_export_score >> end_scoring
 
 
 seller_scoring_dag = seller_scoring()

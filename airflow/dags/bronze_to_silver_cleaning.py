@@ -286,6 +286,22 @@ def bronze_to_silver_cleaning():
 
         cur.execute(
             """
+            CREATE TABLE IF NOT EXISTS public.customers (
+                customer_id VARCHAR(64) PRIMARY KEY,
+                customer_name VARCHAR(200),
+                customer_document VARCHAR(64),
+                customer_email VARCHAR(200),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            INSERT INTO public.customers (customer_id, customer_name, customer_document, customer_email)
+            SELECT customer_id::text, 'Customer ' || SUBSTRING(customer_token, 1, 10), md5(customer_id::text), customer_token || '@mercaandes.com'
+            FROM dim_customer
+            ON CONFLICT (customer_id) DO NOTHING;
+            """
+        )
+
+        cur.execute(
+            """
             UPDATE customers
             SET customer_name = md5(customer_name || customer_id),
                 customer_document = md5(customer_document || customer_id),
@@ -514,9 +530,9 @@ def bronze_to_silver_cleaning():
             cur.execute(
                 """
                 INSERT INTO public.gold_available_inventory (store_id, product_id, available_stock, updated_at)
-                SELECT s.branch_code, p.product_code, 150.00, NOW()
+                SELECT s.branch_id::text, p.product_id::text, 150.00, NOW()
                 FROM public.dim_branch s
-                CROSS JOIN (SELECT product_code FROM public.dim_product LIMIT 10) p
+                CROSS JOIN (SELECT product_id FROM public.dim_product LIMIT 10) p
                 ON CONFLICT (store_id, product_id) DO NOTHING;
                 """
             )
@@ -528,6 +544,59 @@ def bronze_to_silver_cleaning():
 
         t_net_sales = run_net_sales_transformations()
         t_available_inventory = run_available_inventory_transformations()
+
+        @task(task_id="export_pos_and_catalog_to_s3")
+        def export_pos_and_catalog_to_s3(**context):
+            """Export POS transactions and product catalog to AWS S3."""
+            import boto3
+            from airflow.providers.postgres.hooks.postgres import PostgresHook
+            try:
+                s3 = boto3.client("s3")
+                pg_hook = PostgresHook(postgres_conn_id="pos_db")
+                conn = pg_hook.get_conn()
+                cur = conn.cursor()
+
+                for country in ["colombia", "peru", "ecuador", "bolivia", "chile"]:
+                    try:
+                        cur.execute(f"SELECT sale_id, branch_id, seller_id, sale_datetime, gross_amount, discount_amount, tax_amount, status FROM {country}.fact_sale LIMIT 1000;")
+                        rows = cur.fetchall()
+                        if rows:
+                            csv_data = "sale_id,branch_id,seller_id,sale_datetime,gross_amount,discount_amount,tax_amount,status\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
+                            key = f"bronze/pos/{country}/fact_sale.csv"
+                            s3.put_object(Bucket=BUCKET, Key=key, Body=csv_data.encode("utf-8"))
+                            print(f"[BRONZE POS] Exported {len(rows)} records to s3://{BUCKET}/{key}")
+                    except Exception as exc:
+                        print(f"[BRONZE POS Warning] Could not export {country}: {exc}")
+
+                try:
+                    cur.execute("SELECT id, event_id, event_type, order_id, event_timestamp FROM public.marketplace_events LIMIT 1000;")
+                    rows = cur.fetchall()
+                    if rows:
+                        csv_data = "id,event_id,event_type,order_id,event_timestamp\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
+                        key = "bronze/apis/marketplace_events.csv"
+                        s3.put_object(Bucket=BUCKET, Key=key, Body=csv_data.encode("utf-8"))
+                        print(f"[BRONZE APIS] Exported {len(rows)} records to s3://{BUCKET}/{key}")
+                except Exception as exc:
+                    print(f"[BRONZE APIS Warning] Could not export events: {exc}")
+
+                try:
+                    cur.execute("SELECT product_id, sku, product_name, brand, is_active FROM public.dim_product LIMIT 1000;")
+                    rows = cur.fetchall()
+                    if rows:
+                        csv_data = "product_id,sku,product_name,brand,is_active\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
+                        key = f"{SILVER_PRODUCTS_FOLDER}/products_catalog.csv"
+                        s3.put_object(Bucket=BUCKET, Key=key, Body=csv_data.encode("utf-8"))
+                        print(f"[SILVER PRODUCTS] Exported {len(rows)} records to s3://{BUCKET}/{key}")
+                except Exception as exc:
+                    print(f"[SILVER PRODUCTS Warning] Could not export products: {exc}")
+
+                cur.close()
+                conn.close()
+            except Exception as exc:
+                print(f"[S3 Export Warning] Skipped S3 sync: {exc}")
+            return True
+
+        t_export_pos = export_pos_and_catalog_to_s3()
 
     t_verify = verify_silver_layer_quality()
 

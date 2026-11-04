@@ -104,6 +104,7 @@ def silver_to_gold_business_rules():
                 quantity NUMERIC(10, 2) DEFAULT 1,
                 cancel_reason VARCHAR(64)
             );
+            ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS seller_id VARCHAR(64);
             CREATE TABLE IF NOT EXISTS public.gold_stockout_risk (
                 store_id VARCHAR(64),
                 product_id VARCHAR(64),
@@ -115,6 +116,14 @@ def silver_to_gold_business_rules():
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (store_id, product_id)
+            );
+            CREATE TABLE IF NOT EXISTS public.holidays (
+                holiday_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                country_code VARCHAR(2) NOT NULL,
+                holiday_date DATE NOT NULL,
+                holiday_name VARCHAR(150) NOT NULL,
+                source VARCHAR(100) DEFAULT 'system',
+                CONSTRAINT uq_holiday_country_date_name UNIQUE (country_code, holiday_date, holiday_name)
             );
             """
         )
@@ -252,6 +261,7 @@ def silver_to_gold_business_rules():
                 quantity NUMERIC(10, 2) DEFAULT 1,
                 cancel_reason VARCHAR(64)
             );
+            ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS seller_id VARCHAR(64);
             """
         )
 
@@ -295,13 +305,44 @@ def silver_to_gold_business_rules():
     with TaskGroup("seller_inventory_performance", tooltip="RN-09: Seller Inventory Accuracy") as tg_seller:
         t_inventory_accuracy = calculate_inventory_accuracy()
 
+    @task(task_id="export_gold_metrics_to_s3")
+    def export_gold_metrics_to_s3(**context):
+        """Export computed Gold tables to AWS S3."""
+        import boto3
+        from airflow.providers.postgres.hooks.postgres import PostgresHook
+        try:
+            s3 = boto3.client("s3")
+            pg_hook = PostgresHook(postgres_conn_id="pos_db")
+            conn = pg_hook.get_conn()
+            cur = conn.cursor()
+            gold_tables = ["gold_stockout_risk", "gold_available_inventory", "gold_inventory_accuracy", "gold_daily_sales"]
+            for table in gold_tables:
+                try:
+                    cur.execute(f"SELECT * FROM public.{table} LIMIT 1000;")
+                    cols = [desc[0] for desc in cur.description]
+                    rows = cur.fetchall()
+                    if rows:
+                        csv_data = ",".join(cols) + "\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
+                        key = f"{GOLD_FOLDER}/{table}.csv"
+                        s3.put_object(Bucket=BUCKET, Key=key, Body=csv_data.encode("utf-8"))
+                        print(f"[GOLD] Exported {len(rows)} records to s3://{BUCKET}/{key}")
+                except Exception as exc:
+                    print(f"[GOLD Warning] Could not export {table}: {exc}")
+            cur.close()
+            conn.close()
+        except Exception as exc:
+            print(f"[GOLD Warning] S3 export skipped: {exc}")
+        return True
+
+    t_export_gold = export_gold_metrics_to_s3()
+
     end_business_rules = EmptyOperator(
         task_id="end_business_rules",
         doc_md="Successful completion of Silver -> Gold business rules.",
     )
 
     # Parallel execution across workers
-    start_business_rules >> [tg_stockout, tg_seller] >> end_business_rules
+    start_business_rules >> [tg_stockout, tg_seller] >> t_export_gold >> end_business_rules
 
 
 silver_to_gold_business_rules_dag = silver_to_gold_business_rules()

@@ -186,11 +186,13 @@ def f7_promotions_weekly():
             CREATE TABLE IF NOT EXISTS public.order_items (
                 order_item_id VARCHAR(64) PRIMARY KEY,
                 order_id VARCHAR(64),
+                seller_id VARCHAR(64),
                 store_id VARCHAR(64),
                 product_id VARCHAR(64),
                 quantity NUMERIC(10, 2) DEFAULT 1,
                 cancel_reason VARCHAR(64)
             );
+            ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS seller_id VARCHAR(64);
             """
         )
 
@@ -255,6 +257,23 @@ def f7_promotions_weekly():
         pg_hook = PostgresHook(postgres_conn_id="pos_db")
         conn = pg_hook.get_conn()
         cur = conn.cursor()
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.stores (
+                store_id VARCHAR(64) PRIMARY KEY,
+                store_name VARCHAR(120)
+            );
+            CREATE TABLE IF NOT EXISTS public.sales (
+                sale_id VARCHAR(64) PRIMARY KEY,
+                store_id VARCHAR(64),
+                sale_timestamp TIMESTAMPTZ DEFAULT NOW()
+            );
+            INSERT INTO public.stores (store_id, store_name)
+            SELECT branch_id::text, branch_name FROM dim_branch
+            ON CONFLICT (store_id) DO NOTHING;
+            """
+        )
 
         cur.execute(
             """
