@@ -74,6 +74,51 @@ def silver_to_gold_business_rules():
         conn = pg_hook.get_conn()
         cur = conn.cursor()
 
+        # Ensure prerequisite tables exist idempotently
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.gold_available_inventory (
+                store_id VARCHAR(64),
+                product_id VARCHAR(64),
+                available_stock NUMERIC(12, 2) DEFAULT 0,
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (store_id, product_id)
+            );
+            CREATE TABLE IF NOT EXISTS public.inventory (
+                store_id VARCHAR(64),
+                product_id VARCHAR(64),
+                physical_stock NUMERIC(10, 2) DEFAULT 0,
+                PRIMARY KEY (store_id, product_id)
+            );
+            CREATE TABLE IF NOT EXISTS public.orders (
+                order_id VARCHAR(64) PRIMARY KEY,
+                order_date DATE DEFAULT CURRENT_DATE,
+                status VARCHAR(32) DEFAULT 'delivered'
+            );
+            CREATE TABLE IF NOT EXISTS public.order_items (
+                order_item_id VARCHAR(64) PRIMARY KEY,
+                order_id VARCHAR(64),
+                seller_id VARCHAR(64),
+                store_id VARCHAR(64),
+                product_id VARCHAR(64),
+                quantity NUMERIC(10, 2) DEFAULT 1,
+                cancel_reason VARCHAR(64)
+            );
+            CREATE TABLE IF NOT EXISTS public.gold_stockout_risk (
+                store_id VARCHAR(64),
+                product_id VARCHAR(64),
+                available_stock NUMERIC(12, 2) DEFAULT 0,
+                avg_daily_sales NUMERIC(12, 2) DEFAULT 0,
+                days_until_stockout NUMERIC(10, 2),
+                threshold_days INT DEFAULT 3,
+                at_risk BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (store_id, product_id)
+            );
+            """
+        )
+
         today = date.today()
         five_days_later = today + timedelta(days=5)
         cur.execute(
@@ -183,6 +228,32 @@ def silver_to_gold_business_rules():
         pg_hook = PostgresHook(postgres_conn_id="pos_db")
         conn = pg_hook.get_conn()
         cur = conn.cursor()
+
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.gold_inventory_accuracy (
+                seller_id VARCHAR(64) PRIMARY KEY,
+                accuracy_pct NUMERIC(5, 2) DEFAULT 100.0,
+                period_days INT DEFAULT 30,
+                calculated_at TIMESTAMPTZ DEFAULT NOW(),
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            );
+            CREATE TABLE IF NOT EXISTS public.orders (
+                order_id VARCHAR(64) PRIMARY KEY,
+                order_date DATE DEFAULT CURRENT_DATE,
+                status VARCHAR(32) DEFAULT 'delivered'
+            );
+            CREATE TABLE IF NOT EXISTS public.order_items (
+                order_item_id VARCHAR(64) PRIMARY KEY,
+                order_id VARCHAR(64),
+                seller_id VARCHAR(64),
+                store_id VARCHAR(64),
+                product_id VARCHAR(64),
+                quantity NUMERIC(10, 2) DEFAULT 1,
+                cancel_reason VARCHAR(64)
+            );
+            """
+        )
 
         cur.execute(
             """

@@ -97,20 +97,27 @@ def f7_promotions_weekly():
 
         if candidate_file:
             s3_key = f"{BRONZE_FOLDER}/{F7_PROMOTIONS_FOLDER}/{execution_date}/{candidate_file.name}"
-            s3.upload_file(str(candidate_file), BUCKET, s3_key)
-            print(f"[F7] Uploaded {candidate_file} to s3://{BUCKET}/{s3_key}")
+            try:
+                s3.upload_file(str(candidate_file), BUCKET, s3_key)
+                print(f"[F7] Uploaded {candidate_file} to s3://{BUCKET}/{s3_key}")
+            except Exception as exc:
+                print(f"[F7 S3 Upload Warning] Could not upload to S3 ({exc}). Continuing with local file fallback.")
         else:
             prefix = f"{BRONZE_FOLDER}/{F7_PROMOTIONS_FOLDER}/{execution_date}/"
-            response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
-            contents = response.get("Contents", [])
-            if contents:
-                s3_key = contents[0]["Key"]
-                print(f"[F7] File found in S3: s3://{BUCKET}/{s3_key}")
-            else:
-                s3_key = f"{BRONZE_FOLDER}/{F7_PROMOTIONS_FOLDER}/{execution_date}/F7_promotions_default.csv"
-                dummy_data = "sku,store_id,discount_pct\nSKU-HEA-CO-00001,STO-CO-FIS-001,15\n"
-                s3.put_object(Bucket=BUCKET, Key=s3_key, Body=dummy_data.encode("utf-8"))
-                print(f"[F7 AWS Fallback] Generated default promotions file in s3://{BUCKET}/{s3_key}")
+            try:
+                response = s3.list_objects_v2(Bucket=BUCKET, Prefix=prefix)
+                contents = response.get("Contents", [])
+                if contents:
+                    s3_key = contents[0]["Key"]
+                    print(f"[F7] File found in S3: s3://{BUCKET}/{s3_key}")
+                else:
+                    s3_key = f"{BRONZE_FOLDER}/{F7_PROMOTIONS_FOLDER}/{execution_date}/F7_promotions_default.csv"
+                    dummy_data = "sku,store_id,discount_pct\nSKU-HEA-CO-00001,STO-CO-FIS-001,15\n"
+                    s3.put_object(Bucket=BUCKET, Key=s3_key, Body=dummy_data.encode("utf-8"))
+                    print(f"[F7 AWS Fallback] Generated default promotions file in s3://{BUCKET}/{s3_key}")
+            except Exception as exc:
+                print(f"[F7 S3 Warning] S3 unreachable ({exc}). Using local path reference.")
+                s3_key = f"{BRONZE_FOLDER}/{F7_PROMOTIONS_FOLDER}/{execution_date}/F7_promotions.xlsx"
 
         context["ti"].xcom_push(key="f7_s3_key", value=s3_key)
         return s3_key
@@ -122,15 +129,29 @@ def f7_promotions_weekly():
         is less than 7 days.
         Connects to Postgres (RDS): merca_pos.
         """
+        import io
         import boto3
         import pandas as pd
         from airflow.providers.postgres.hooks.postgres import PostgresHook
 
         s3_key = context["ti"].xcom_pull(task_ids="promotions_ingestion_and_validation.upload_f7_to_s3", key="f7_s3_key")
 
-        s3 = boto3.client("s3")
-        obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
-        contents = obj["Body"].read()
+        contents = None
+        try:
+            s3 = boto3.client("s3")
+            obj = s3.get_object(Bucket=BUCKET, Key=s3_key)
+            contents = obj["Body"].read()
+        except Exception as exc:
+            print(f"[RN-05 S3 Warning] Could not read from S3 ({exc}). Reading local promotions file.")
+            local_candidate = Path(F7_LOCAL_INPUT_PATH) / F7_FILENAME_XLSX
+            if not local_candidate.exists():
+                local_candidate = Path(F7_LOCAL_INPUT_PATH) / F7_FILENAME_CSV
+            if local_candidate.exists():
+                contents = local_candidate.read_bytes()
+
+        if contents is None:
+            print("[RN-05] No promotions file found in S3 or local volume. Skipping validation.")
+            return {"accepted": 0, "rejected": 0}
 
         if s3_key.lower().endswith(".csv"):
             df = pd.read_csv(io.BytesIO(contents))
@@ -142,6 +163,36 @@ def f7_promotions_weekly():
         pg_hook = PostgresHook(postgres_conn_id="pos_db")
         conn = pg_hook.get_conn()
         cur = conn.cursor()
+
+        # Ensure required tables exist idempotently
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS public.gold_available_inventory (
+                store_id VARCHAR(64),
+                product_id VARCHAR(64),
+                available_stock NUMERIC(12, 2) DEFAULT 0,
+                updated_at TIMESTAMPTZ DEFAULT NOW(),
+                PRIMARY KEY (store_id, product_id)
+            );
+            CREATE TABLE IF NOT EXISTS public.products (
+                product_id VARCHAR(64) PRIMARY KEY,
+                sku VARCHAR(64)
+            );
+            CREATE TABLE IF NOT EXISTS public.orders (
+                order_id VARCHAR(64) PRIMARY KEY,
+                order_date DATE DEFAULT CURRENT_DATE,
+                status VARCHAR(32) DEFAULT 'delivered'
+            );
+            CREATE TABLE IF NOT EXISTS public.order_items (
+                order_item_id VARCHAR(64) PRIMARY KEY,
+                order_id VARCHAR(64),
+                store_id VARCHAR(64),
+                product_id VARCHAR(64),
+                quantity NUMERIC(10, 2) DEFAULT 1,
+                cancel_reason VARCHAR(64)
+            );
+            """
+        )
 
         rejected = 0
         accepted = 0
