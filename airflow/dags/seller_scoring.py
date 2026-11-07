@@ -467,7 +467,7 @@ def seller_scoring():
                     inventory_accuracy, cancellation_rate, calculated_at
                 )
                 SELECT
-                    s.seller_id,
+                    s.seller_id::text,
                     ROUND(
                         0.35 * COALESCE(o.dispatch_pct, 95.0) +
                         0.25 * (COALESCE(r.review_rating, 4.5) * 20.0) +
@@ -486,24 +486,24 @@ def seller_scoring():
                            100.0 * COUNT(*) FILTER (WHERE dispatch_lead_time_hours <= 48) / NULLIF(COUNT(*), 0) AS dispatch_pct
                     FROM z1_silver.vw_seller_dispatch
                     GROUP BY source_seller_id
-                ) o ON s.seller_id = o.seller_id
+                ) o ON s.seller_id::text = o.seller_id
                 LEFT JOIN (
                     SELECT source_seller_id AS seller_id, AVG(review_score) AS review_rating
                     FROM z1_silver.vw_seller_reviews
                     GROUP BY source_seller_id
-                ) r ON s.seller_id = r.seller_id
+                ) r ON s.seller_id::text = r.seller_id
                 LEFT JOIN (
                     SELECT source_seller_id AS seller_id, 
                            100.0 * COUNT(*) FILTER (WHERE inventory_accurate = TRUE) / NULLIF(COUNT(*), 0) AS inventory_accuracy
                     FROM z1_silver.vw_seller_inventory
                     GROUP BY source_seller_id
-                ) i ON s.seller_id = i.seller_id
+                ) i ON s.seller_id::text = i.seller_id
                 LEFT JOIN (
                     SELECT source_seller_id AS seller_id, 
                            100.0 * COUNT(*) FILTER (WHERE cancelled = TRUE) / NULLIF(COUNT(*), 0) AS cancellation_rate
                     FROM z1_silver.vw_seller_cancellations
                     GROUP BY source_seller_id
-                ) c ON s.seller_id = c.seller_id
+                ) c ON s.seller_id::text = c.seller_id
                 ON CONFLICT (seller_id) DO UPDATE SET
                     score = EXCLUDED.score,
                     dispatch_pct = EXCLUDED.dispatch_pct,
