@@ -558,7 +558,7 @@ def seller_scoring():
                     rows = cur.fetchall()
                     if rows:
                         csv_data = ",".join(cols) + "\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
-                        key = f"gold/{tbl_name}.csv"
+                        key = f"gold/{table}/{table}.csv"
                         s3.put_object(Bucket=bucket, Key=key, Body=csv_data.encode("utf-8"))
                         print(f"[GOLD SELLER SCORE] Exported {len(rows)} records to s3://{bucket}/{key}")
                 except Exception as exc:

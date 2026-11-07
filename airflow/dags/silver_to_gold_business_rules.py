@@ -333,7 +333,7 @@ def silver_to_gold_business_rules():
                         writer = csv.writer(output)
                         writer.writerow(cols)
                         writer.writerows(rows)
-                        key = f"{GOLD_FOLDER}/{table}.csv"
+                        key = f"{GOLD_FOLDER}/{table}/{table}.csv"
                         s3.put_object(Bucket=BUCKET, Key=key, Body=output.getvalue().encode("utf-8"))
                         print(f"[GOLD] Exported {len(rows)} records to s3://{BUCKET}/{key}")
                 except Exception as exc:
