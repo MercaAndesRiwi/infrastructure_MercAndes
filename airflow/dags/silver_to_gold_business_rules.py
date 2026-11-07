@@ -92,9 +92,10 @@ def silver_to_gold_business_rules():
         conn = pg_hook.get_conn()
         cur = conn.cursor()
 
-        # Ensure prerequisite tables exist idempotently
+        # Ensure prerequisite tables exist idempotently in Gold
         cur.execute(
             """
+            CREATE SCHEMA IF NOT EXISTS z2_gold;
             CREATE TABLE IF NOT EXISTS z2_gold.available_inventory (
                 store_id VARCHAR(64),
                 product_id VARCHAR(64),
@@ -102,30 +103,6 @@ def silver_to_gold_business_rules():
                 updated_at TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (store_id, product_id)
             );
-            CREATE TABLE IF NOT EXISTS public.inventory (
-                store_id VARCHAR(64),
-                product_id VARCHAR(64),
-                physical_stock NUMERIC(10, 2) DEFAULT 0,
-                PRIMARY KEY (store_id, product_id)
-            );
-            CREATE TABLE IF NOT EXISTS public.orders (
-                order_id VARCHAR(64) PRIMARY KEY,
-                order_date DATE DEFAULT CURRENT_DATE,
-                status VARCHAR(32) DEFAULT 'delivered'
-            );
-            CREATE TABLE IF NOT EXISTS public.order_items (
-                order_item_id VARCHAR(64) PRIMARY KEY,
-                order_id VARCHAR(64),
-                seller_id VARCHAR(64),
-                store_id VARCHAR(64),
-                product_id VARCHAR(64),
-                quantity NUMERIC(10, 2) DEFAULT 1,
-                price NUMERIC(10, 2) DEFAULT 25.00,
-                cancel_reason VARCHAR(64)
-            );
-            ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS seller_id VARCHAR(64);
-            ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS price NUMERIC(10, 2) DEFAULT 25.00;
-
             CREATE TABLE IF NOT EXISTS z2_gold.stockout_risk (
                 store_id VARCHAR(64),
                 product_id VARCHAR(64),
@@ -141,14 +118,11 @@ def silver_to_gold_business_rules():
             );
             ALTER TABLE z2_gold.stockout_risk ADD COLUMN IF NOT EXISTS sales_at_risk_usd NUMERIC(14, 2) DEFAULT 0.00;
 
-            CREATE TABLE IF NOT EXISTS public.holidays (
-                holiday_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                country_code VARCHAR(2) NOT NULL,
-                holiday_date DATE NOT NULL,
-                holiday_name VARCHAR(150) NOT NULL,
-                source VARCHAR(100) DEFAULT 'system',
-                CONSTRAINT uq_holiday_country_date_name UNIQUE (country_code, holiday_date, holiday_name)
-            );
+            -- Initialize available_inventory from public.hot_inventory_risk or mock baseline
+            INSERT INTO z2_gold.available_inventory (store_id, product_id, available_stock)
+            SELECT branch_id::text, product_id::text, available_stock
+            FROM public.hot_inventory_risk
+            ON CONFLICT (store_id, product_id) DO UPDATE SET available_stock = EXCLUDED.available_stock;
             """
         )
 
@@ -156,7 +130,7 @@ def silver_to_gold_business_rules():
         five_days_later = today + timedelta(days=5)
         cur.execute(
             """
-            SELECT COUNT(*) FROM holidays
+            SELECT COUNT(*) FROM public.dim_holiday
             WHERE country_code IN ('CO', 'PE', 'EC', 'BO', 'CL')
             AND holiday_date BETWEEN %s AND %s
             """,
@@ -196,15 +170,12 @@ def silver_to_gold_business_rules():
             FROM z2_gold.available_inventory ai
             LEFT JOIN (
                 SELECT
-                    store_id,
-                    product_id,
-                    AVG(quantity) AS avg_daily_sales,
-                    COALESCE(AVG(price), 25.00) AS avg_unit_price
-                FROM order_items oi
-                JOIN orders o ON oi.order_id = o.order_id
-                WHERE o.order_date >= CURRENT_DATE - INTERVAL '30 days'
-                AND o.status NOT IN ('cancelled', 'exception_return')
-                GROUP BY store_id, product_id
+                    branch_id::text AS store_id,
+                    product_id::text AS product_id,
+                    ROUND(AVG(quantity), 2) AS avg_daily_sales,
+                    ROUND(COALESCE(AVG(unit_price_usd), 25.00), 2) AS avg_unit_price
+                FROM z2_gold.vw_sales_consolidated
+                GROUP BY branch_id, product_id
             ) s ON s.store_id = ai.store_id AND s.product_id = ai.product_id
             ON CONFLICT (store_id, product_id)
             DO UPDATE SET available_stock = EXCLUDED.available_stock,
@@ -291,23 +262,6 @@ def silver_to_gold_business_rules():
                 calculated_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             );
-            CREATE TABLE IF NOT EXISTS public.orders (
-                order_id VARCHAR(64) PRIMARY KEY,
-                order_date DATE DEFAULT CURRENT_DATE,
-                status VARCHAR(32) DEFAULT 'delivered'
-            );
-            CREATE TABLE IF NOT EXISTS public.order_items (
-                order_item_id VARCHAR(64) PRIMARY KEY,
-                order_id VARCHAR(64),
-                seller_id VARCHAR(64),
-                store_id VARCHAR(64),
-                product_id VARCHAR(64),
-                quantity NUMERIC(10, 2) DEFAULT 1,
-                price NUMERIC(10, 2) DEFAULT 25.00,
-                cancel_reason VARCHAR(64)
-            );
-            ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS seller_id VARCHAR(64);
-            ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS price NUMERIC(10, 2) DEFAULT 25.00;
             """
         )
 
@@ -315,18 +269,16 @@ def silver_to_gold_business_rules():
             """
             INSERT INTO z2_gold.inventory_accuracy (seller_id, accuracy_pct, period_days, calculated_at)
             SELECT
-                oi.seller_id,
+                seller_id,
                 ROUND(
-                    100.0 * COUNT(*) FILTER (WHERE oi.cancel_reason IS NULL OR oi.cancel_reason <> 'out_of_stock')
+                    100.0 * COUNT(*) FILTER (WHERE cancellation_reason IS NULL OR cancellation_reason NOT ILIKE '%stock%')
                     / NULLIF(COUNT(*), 0),
                     2
                 ) AS accuracy_pct,
                 30,
                 NOW()
-            FROM order_items oi
-            JOIN orders o ON oi.order_id = o.order_id
-            WHERE o.order_date >= CURRENT_DATE - INTERVAL '30 days'
-            GROUP BY oi.seller_id
+            FROM z1_silver.seller_score_cancellations
+            GROUP BY seller_id
             ON CONFLICT (seller_id)
             DO UPDATE SET accuracy_pct = EXCLUDED.accuracy_pct, updated_at = NOW()
             """
