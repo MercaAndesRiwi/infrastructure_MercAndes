@@ -278,16 +278,16 @@ def silver_to_gold_business_rules():
             """
             INSERT INTO z2_gold.inventory_accuracy (seller_id, accuracy_pct, period_days, calculated_at)
             SELECT
-                seller_id,
+                source_seller_id AS seller_id,
                 ROUND(
-                    100.0 * COUNT(*) FILTER (WHERE cancellation_reason IS NULL OR cancellation_reason NOT ILIKE '%stock%')
+                    100.0 * COUNT(*) FILTER (WHERE inventory_accurate = true)
                     / NULLIF(COUNT(*), 0),
                     2
                 ) AS accuracy_pct,
                 30,
                 NOW()
-            FROM z1_silver.seller_score_cancellations
-            GROUP BY seller_id
+            FROM z1_silver.seller_score_inventory
+            GROUP BY source_seller_id
             ON CONFLICT (seller_id)
             DO UPDATE SET accuracy_pct = EXCLUDED.accuracy_pct, updated_at = NOW()
             """

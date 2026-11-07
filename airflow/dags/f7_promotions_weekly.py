@@ -200,15 +200,12 @@ def f7_promotions_weekly():
                        COALESCE(s.avg_daily_sales, 0)
                 FROM z2_gold.available_inventory ai
                 LEFT JOIN (
-                    SELECT store_id, product_id, AVG(quantity) AS avg_daily_sales
-                    FROM order_items oi
-                    JOIN orders o ON oi.order_id = o.order_id
-                    WHERE o.order_date >= CURRENT_DATE - INTERVAL '30 days'
-                      AND o.status NOT IN ('cancelled', 'exception_return')
-                    GROUP BY store_id, product_id
-                ) s ON s.store_id = ai.store_id AND s.product_id = (
-                    SELECT product_id FROM products WHERE sku = %s LIMIT 1
-                )
+                    SELECT store_id, sku, AVG(quantity) AS avg_daily_sales
+                    FROM z2_gold.vw_sales_consolidated
+                    WHERE order_date >= CURRENT_DATE - INTERVAL '30 days'
+                      AND status NOT IN ('cancelled', 'exception_return')
+                    GROUP BY store_id, sku
+                ) s ON s.store_id = ai.store_id AND s.sku = %s
                 WHERE ai.store_id = %s
                 """,
                 (sku, store_id),
@@ -253,8 +250,8 @@ def f7_promotions_weekly():
             WHERE b.is_active = TRUE
             AND NOT EXISTS (
                 SELECT 1 FROM z2_gold.vw_sales_consolidated s
-                WHERE s.branch_id = b.branch_id
-                AND s.sale_date >= CURRENT_DATE - INTERVAL '1 day'
+                WHERE s.store_id = b.branch_id::text
+                AND s.order_date >= CURRENT_DATE - INTERVAL '1 day'
             )
             """
         )
