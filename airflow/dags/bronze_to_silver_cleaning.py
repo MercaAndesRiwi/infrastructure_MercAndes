@@ -259,7 +259,7 @@ def bronze_to_silver_cleaning():
 
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS public.gold_daily_sales (
+                CREATE TABLE IF NOT EXISTS z2_gold.daily_sales (
                     order_date DATE PRIMARY KEY,
                     total_orders INTEGER NOT NULL DEFAULT 0,
                     total_net_sales_usd NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
@@ -299,7 +299,7 @@ def bronze_to_silver_cleaning():
                 WITH partition_sales AS (
                     {combined_sql}
                 )
-                INSERT INTO public.gold_daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
+                INSERT INTO z2_gold.daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
                 SELECT
                     %s::date AS order_date,
                     COUNT(DISTINCT sale_id) AS total_orders,
@@ -525,7 +525,7 @@ def bronze_to_silver_cleaning():
             cur = conn.cursor()
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS public.gold_daily_sales (
+                CREATE TABLE IF NOT EXISTS z2_gold.daily_sales (
                     order_date DATE PRIMARY KEY,
                     total_orders INTEGER NOT NULL DEFAULT 0,
                     total_net_sales_usd NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
@@ -592,7 +592,7 @@ def bronze_to_silver_cleaning():
                     WITH all_sales AS (
                         {combined_sql}
                     )
-                    INSERT INTO public.gold_daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
+                    INSERT INTO z2_gold.daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
                     SELECT
                         sale_date AS order_date,
                         COUNT(DISTINCT sale_id) AS total_orders,
@@ -618,7 +618,7 @@ def bronze_to_silver_cleaning():
             try:
                 import boto3
                 s3 = boto3.client("s3")
-                cur.execute("SELECT order_date, total_orders, total_net_sales_usd FROM public.gold_daily_sales ORDER BY order_date DESC;")
+                cur.execute("SELECT order_date, total_orders, total_net_sales_usd FROM z2_gold.daily_sales ORDER BY order_date DESC;")
                 rows = cur.fetchall()
                 if rows:
                     output = io.StringIO()
@@ -651,7 +651,7 @@ def bronze_to_silver_cleaning():
             cur = conn.cursor()
             cur.execute(
                 """
-                CREATE TABLE IF NOT EXISTS public.gold_available_inventory (
+                CREATE TABLE IF NOT EXISTS z2_gold.available_inventory (
                     store_id VARCHAR(64),
                     product_id VARCHAR(64),
                     available_stock NUMERIC(12, 2) DEFAULT 0,
@@ -662,7 +662,7 @@ def bronze_to_silver_cleaning():
             )
             cur.execute(
                 """
-                INSERT INTO public.gold_available_inventory (store_id, product_id, available_stock, updated_at)
+                INSERT INTO z2_gold.available_inventory (store_id, product_id, available_stock, updated_at)
                 SELECT s.branch_id::text, p.product_id::text, 150.00, NOW()
                 FROM public.dim_branch s
                 CROSS JOIN (SELECT product_id FROM public.dim_product LIMIT 10) p

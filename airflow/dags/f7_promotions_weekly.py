@@ -173,7 +173,7 @@ def f7_promotions_weekly():
         # Ensure required tables exist idempotently
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS public.gold_available_inventory (
+            CREATE TABLE IF NOT EXISTS z2_gold.available_inventory (
                 store_id VARCHAR(64),
                 product_id VARCHAR(64),
                 available_stock NUMERIC(12, 2) DEFAULT 0,
@@ -216,7 +216,7 @@ def f7_promotions_weekly():
                 """
                 SELECT COALESCE(ai.available_stock, 0),
                        COALESCE(s.avg_daily_sales, 0)
-                FROM gold_available_inventory ai
+                FROM z2_gold.available_inventory ai
                 LEFT JOIN (
                     SELECT store_id, product_id, AVG(quantity) AS avg_daily_sales
                     FROM order_items oi

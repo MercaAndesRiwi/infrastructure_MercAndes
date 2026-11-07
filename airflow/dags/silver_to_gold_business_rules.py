@@ -95,7 +95,7 @@ def silver_to_gold_business_rules():
         # Ensure prerequisite tables exist idempotently
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS public.gold_available_inventory (
+            CREATE TABLE IF NOT EXISTS z2_gold.available_inventory (
                 store_id VARCHAR(64),
                 product_id VARCHAR(64),
                 available_stock NUMERIC(12, 2) DEFAULT 0,
@@ -126,7 +126,7 @@ def silver_to_gold_business_rules():
             ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS seller_id VARCHAR(64);
             ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS price NUMERIC(10, 2) DEFAULT 25.00;
 
-            CREATE TABLE IF NOT EXISTS public.gold_stockout_risk (
+            CREATE TABLE IF NOT EXISTS z2_gold.stockout_risk (
                 store_id VARCHAR(64),
                 product_id VARCHAR(64),
                 available_stock NUMERIC(12, 2) DEFAULT 0,
@@ -139,7 +139,7 @@ def silver_to_gold_business_rules():
                 updated_at TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (store_id, product_id)
             );
-            ALTER TABLE public.gold_stockout_risk ADD COLUMN IF NOT EXISTS sales_at_risk_usd NUMERIC(14, 2) DEFAULT 0.00;
+            ALTER TABLE z2_gold.stockout_risk ADD COLUMN IF NOT EXISTS sales_at_risk_usd NUMERIC(14, 2) DEFAULT 0.00;
 
             CREATE TABLE IF NOT EXISTS public.holidays (
                 holiday_id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -168,7 +168,7 @@ def silver_to_gold_business_rules():
 
         cur.execute(
             """
-            INSERT INTO gold_stockout_risk (
+            INSERT INTO z2_gold.stockout_risk (
                 store_id, product_id, available_stock, avg_daily_sales,
                 days_until_stockout, threshold_days, at_risk, sales_at_risk_usd, created_at
             )
@@ -193,7 +193,7 @@ def silver_to_gold_business_rules():
                     ELSE 0.00
                 END,
                 NOW()
-            FROM gold_available_inventory ai
+            FROM z2_gold.available_inventory ai
             LEFT JOIN (
                 SELECT
                     store_id,
@@ -238,7 +238,7 @@ def silver_to_gold_business_rules():
             """
             SELECT store_id, product_id, available_stock, avg_daily_sales,
                 days_until_stockout, threshold_days, sales_at_risk_usd
-            FROM gold_stockout_risk
+            FROM z2_gold.stockout_risk
             WHERE at_risk = TRUE
             """
         )
@@ -284,7 +284,7 @@ def silver_to_gold_business_rules():
 
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS public.gold_inventory_accuracy (
+            CREATE TABLE IF NOT EXISTS z2_gold.inventory_accuracy (
                 seller_id VARCHAR(64) PRIMARY KEY,
                 accuracy_pct NUMERIC(5, 2) DEFAULT 100.0,
                 period_days INT DEFAULT 30,
@@ -313,7 +313,7 @@ def silver_to_gold_business_rules():
 
         cur.execute(
             """
-            INSERT INTO gold_inventory_accuracy (seller_id, accuracy_pct, period_days, calculated_at)
+            INSERT INTO z2_gold.inventory_accuracy (seller_id, accuracy_pct, period_days, calculated_at)
             SELECT
                 oi.seller_id,
                 ROUND(
@@ -361,10 +361,10 @@ def silver_to_gold_business_rules():
             pg_hook = PostgresHook(postgres_conn_id="pos_db")
             conn = pg_hook.get_conn()
             cur = conn.cursor()
-            gold_tables = ["gold_stockout_risk", "gold_available_inventory", "gold_inventory_accuracy", "gold_daily_sales"]
+            gold_tables = ["stockout_risk", "available_inventory", "inventory_accuracy", "daily_sales"]
             for table in gold_tables:
                 try:
-                    cur.execute(f"SELECT * FROM public.{table};")
+                    cur.execute(f"SELECT * FROM z2_gold.{table};")
                     cols = [desc[0] for desc in cur.description]
                     rows = cur.fetchall()
                     if rows:
