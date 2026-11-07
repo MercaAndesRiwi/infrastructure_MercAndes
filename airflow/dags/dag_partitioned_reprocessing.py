@@ -17,17 +17,24 @@ import json
 import os
 from datetime import date, datetime, timedelta
 
-from airflow.decorators import dag, task
-from airflow.models.param import Param
+try:
+    from airflow.sdk import Param, dag, task
+except ImportError:
+    from airflow.decorators import dag, task
+    from airflow.models.param import Param
+
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 from operational_messaging.config import DATA_QUALITY_QUEUE
 from operational_messaging.messages import new_message
 from operational_messaging.rabbitmq import publish_message
 
 try:
-    from airflow.operators.empty import EmptyOperator
+    from airflow.providers.standard.operators.empty import EmptyOperator
 except ImportError:
-    from airflow.operators.dummy import DummyOperator as EmptyOperator  # type: ignore
+    try:
+        from airflow.operators.empty import EmptyOperator
+    except ImportError:
+        from airflow.operators.dummy import DummyOperator as EmptyOperator  # type: ignore
 
 default_args = {
     "owner": "MercaAndes Data Team",
