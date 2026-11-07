@@ -25,7 +25,15 @@ except ImportError:
     from airflow.utils.task_group import TaskGroup
 
 from airflow.providers.postgres.hooks.postgres import PostgresHook
-from operational_messaging.config import STOCKOUT_QUEUE
+import sys
+from pathlib import Path
+for _p in ["/opt/airflow/dags", str(Path(__file__).parent)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+try:
+    from operational_messaging.config import STOCKOUT_QUEUE
+except Exception:
+    STOCKOUT_QUEUE = "alertas.riesgo_quiebre" 
 from operational_messaging.messages import new_message
 from operational_messaging.rabbitmq import publish_messages
 
