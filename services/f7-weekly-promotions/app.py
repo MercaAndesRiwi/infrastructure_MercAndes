@@ -34,15 +34,15 @@ PROMOTION_REQUESTS_AUDIT: list[dict] = []
 
 
 class PromotionRequest(BaseModel):
-    sku: str = Field(..., description="Product SKU (e.g. SKU-HEA-CO-00001)")
-    store_id: str = Field(..., description="Store/Branch ID (e.g. STO-CO-FIS-001)")
-    seller_id: Optional[str] = Field(default=None, description="Seller ID")
-    discount_pct: float = Field(..., ge=0.0, le=100.0, description="Discount percentage")
-    start_date: str = Field(..., description="Promotion start date (YYYY-MM-DD)")
-    end_date: str = Field(..., description="Promotion end date (YYYY-MM-DD)")
+    sku: str = Field(default="SKU-CO-0189", description="Product SKU (e.g. SKU-CO-0189)")
+    store_id: str = Field(default="STO-CO-FIS-001", description="Store/Branch ID (e.g. STO-CO-FIS-001)")
+    seller_id: Optional[str] = Field(default="SEL-CO-001", description="Seller ID")
+    discount_pct: float = Field(default=15.0, ge=0.0, le=100.0, description="Discount percentage")
+    start_date: str = Field(default="2026-11-10", description="Promotion start date (YYYY-MM-DD)")
+    end_date: str = Field(default="2026-11-17", description="Promotion end date (YYYY-MM-DD)")
     regular_price: float = Field(default=50.0, ge=0.0, description="Regular unit price in USD")
-    available_stock_override: Optional[float] = Field(default=None, description="Override for testing inventory stock")
-    avg_daily_sales_override: Optional[float] = Field(default=None, description="Override for testing avg daily sales")
+    available_stock_override: Optional[float] = Field(default=140.0, description="Override for testing inventory stock")
+    avg_daily_sales_override: Optional[float] = Field(default=10.0, description="Override for testing avg daily sales")
 
 
 @app.get("/health")
@@ -239,13 +239,24 @@ async def ingest_promotions(file: UploadFile = File(...)):
     }
 
 
+class RabbitPromotionPayload(BaseModel):
+    event_type: str = Field(default="PROMOTION_BATCH_RECEIVED", description="Type of event")
+    campaign_id: str = Field(default="CAMP-BLACK-FRIDAY-2026", description="Marketing campaign ID")
+    country: str = Field(default="CO", description="Country code (CO, CL, PE, EC, BO)")
+    week: int = Field(default=46, description="Calendar week number")
+    category: str = Field(default="Alimentos y Cuidado Personal", description="Product category")
+    total_products: int = Field(default=25, description="Number of products included")
+    created_by: str = Field(default="Equipo Comercial MercaAndes", description="Author or department")
+
+
 @app.post("/api/v1/rabbit/ingest")
-def rabbit_ingest(payload: dict):
+def rabbit_ingest(payload: RabbitPromotionPayload):
     """
     Endpoint for RabbitMQ workers on EC2 (AWS) to report consumption status
     or send promotions directly.
     Connects to RabbitMQ queue: mercaandes.promotions.weekly.ingest
     """
     from src.publisher import publish_to_rabbitmq
-    publish_to_rabbitmq(queue="mercaandes.promotions.weekly.ingest", message=payload)
-    return {"status": "received", "queue": "mercaandes.promotions.weekly.ingest"}
+    data = payload.model_dump()
+    publish_to_rabbitmq(queue="mercaandes.promotions.weekly.ingest", message=data)
+    return {"status": "received", "queue": "mercaandes.promotions.weekly.ingest", "payload": data}
