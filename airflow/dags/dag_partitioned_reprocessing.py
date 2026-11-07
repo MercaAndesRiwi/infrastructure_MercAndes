@@ -68,7 +68,7 @@ SILVER_FOLDER = os.getenv("S3_SILVER_FOLDER", "silver")
             description="Start date for backfill partition window (YYYY-MM-DD)",
         ),
         "end_date": Param(
-            default="2025-12-31",
+            default="2027-12-31",
             type="string",
             format="date",
             description="End date for backfill partition window (YYYY-MM-DD)",
