@@ -47,6 +47,7 @@ services:
     restart: "no"
 
   rabbitmq:
+    profiles: ["local-streaming"]
     image: rabbitmq:3.13-management
     container_name: platform-rabbitmq
     env_file: [.env]
@@ -64,6 +65,7 @@ services:
     restart: unless-stopped
 
   kafka:
+    profiles: ["local-streaming"]
     image: confluentinc/cp-kafka:7.6.1
     container_name: platform-kafka
     ports: ["${KAFKA_HOST_PORT:-9092}:9092"]
@@ -92,6 +94,7 @@ services:
       start_period: 30s
 
   kafka-init:
+    profiles: ["local-streaming"]
     image: confluentinc/cp-kafka:7.6.1
     container_name: platform-kafka-init
     depends_on:
@@ -99,7 +102,7 @@ services:
         condition: service_healthy
     env_file: [.env]
     environment:
-      KAFKA_BOOTSTRAP_SERVER: kafka:29092
+      KAFKA_BOOTSTRAP_SERVER: ${KAFKA_BOOTSTRAP_SERVERS:-10.0.11.155:9092}
       KAFKA_TOPIC_ORDERS: ${KAFKA_TOPIC_ORDERS:-mercaandes.orders.events}
       KAFKA_ORDERS_PARTITIONS: ${KAFKA_ORDERS_PARTITIONS:-3}
       KAFKA_REPLICATION_FACTOR: ${KAFKA_REPLICATION_FACTOR:-1}
@@ -114,8 +117,7 @@ services:
     container_name: platform-kafka-ui
     ports: ["${KAFKA_UI_PORT:-9000}:9000"]
     environment:
-      KAFKA_BROKERCONNECT: kafka:29092
-    depends_on: [kafka]
+      KAFKA_BROKERCONNECT: ${KAFKA_BOOTSTRAP_SERVERS:-10.0.11.155:9092}
     restart: unless-stopped
 
   spark-master:
@@ -168,7 +170,7 @@ services:
     container_name: platform-seller-score-ingestion-job
     env_file: [.env]
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-10.0.11.155:9092}
       KAFKA_TOPIC_ORDERS: ${KAFKA_TOPIC_ORDERS:-mercaandes.orders.events}
       KAFKA_SELLER_SCORE_GROUP: seller-score-silver
       POSTGRES_HOST: postgres
@@ -179,8 +181,6 @@ services:
     entrypoint: ["sleep", "infinity"]
     networks: [seller-score]
     depends_on:
-      kafka:
-        condition: service_healthy
       postgres:
         condition: service_healthy
       gold-seller-score-schema:
@@ -195,7 +195,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST:-10.0.11.155}:${RABBITMQ_PORT:-5672}/${RABBITMQ_VHOST:-/}
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
@@ -213,7 +213,6 @@ services:
     command: version
     depends_on:
       postgres: {condition: service_healthy}
-      rabbitmq: {condition: service_healthy}
 
   airflow-apiserver:
     image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.1.5}
@@ -223,7 +222,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST:-10.0.11.155}:${RABBITMQ_PORT:-5672}/${RABBITMQ_VHOST:-/}
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
@@ -234,7 +233,7 @@ services:
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
@@ -263,7 +262,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST:-10.0.11.155}:${RABBITMQ_PORT:-5672}/${RABBITMQ_VHOST:-/}
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
@@ -275,7 +274,7 @@ services:
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
@@ -303,7 +302,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST:-10.0.11.155}:${RABBITMQ_PORT:-5672}/${RABBITMQ_VHOST:-/}
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
@@ -330,13 +329,13 @@ services:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST:-10.0.11.155}:${RABBITMQ_PORT:-5672}/${RABBITMQ_VHOST:-/}
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       S3_DATA_LAKE_BUCKET_NAME: ${S3_DATA_LAKE_BUCKET_NAME}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
@@ -359,7 +358,6 @@ services:
       - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
     command: celery worker
     depends_on:
-      rabbitmq: {condition: service_healthy}
       postgres: {condition: service_healthy}
       airflow-init: {condition: service_completed_successfully}
     networks:
@@ -375,13 +373,13 @@ services:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST:-10.0.11.155}:${RABBITMQ_PORT:-5672}/${RABBITMQ_VHOST:-/}
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
       S3_DATA_LAKE_BUCKET_NAME: ${S3_DATA_LAKE_BUCKET_NAME}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
@@ -404,7 +402,6 @@ services:
       - ./inputs/f1_kaggle:/opt/inputs/f1_kaggle:ro
     command: celery worker
     depends_on:
-      rabbitmq: {condition: service_healthy}
       postgres: {condition: service_healthy}
       airflow-init: {condition: service_completed_successfully}
     networks: [default, seller-score]
@@ -418,12 +415,11 @@ services:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
-      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST:-/}
+      AIRFLOW__CELERY__BROKER_URL: amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@${RABBITMQ_HOST:-10.0.11.155}:${RABBITMQ_PORT:-5672}/${RABBITMQ_VHOST:-/}
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${AIRFLOW_DB_USER:-airflow}:${AIRFLOW_DB_PASSWORD}@postgres:5432/${AIRFLOW_DB_NAME:-airflow}
     ports: ["${AIRFLOW_FLOWER_PORT:-5555}:5555"]
     command: celery flower
     depends_on:
-      rabbitmq: {condition: service_healthy}
       postgres: {condition: service_healthy}
       airflow-init: {condition: service_completed_successfully}
     restart: unless-stopped
@@ -513,21 +509,19 @@ services:
     container_name: platform-marketplace-api
     env_file: [.env]
     environment:
-      KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-10.0.11.155:9092}
       KAFKA_ENABLED: "${KAFKA_ENABLED:-true}"
       KAFKA_TOPIC_ORDERS: "${KAFKA_TOPIC_ORDERS:-mercaandes.orders.events}"
       SERVER_HOST: "0.0.0.0"
       SERVER_PORT: "8000"
       MASTER_SEED: "${MASTER_SEED:-42}"
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
       RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS: "${RABBITMQ_QUEUE_PURCHASE_NOTIFICATIONS:-mercaandes.notifications.purchase}"
     ports: ["${MARKETPLACE_API_PORT:-8003}:8000"]
-    depends_on:
-      rabbitmq: {condition: service_healthy}
     restart: unless-stopped
 
   f7-weekly-promotions:
@@ -539,9 +533,9 @@ services:
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS}
+      KAFKA_BOOTSTRAP_SERVERS: ${KAFKA_BOOTSTRAP_SERVERS:-10.0.11.155:9092}
       KAFKA_TOPIC_PROMOTIONS_WEEKLY: ${KAFKA_TOPIC_PROMOTIONS_WEEKLY}
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: ${RABBITMQ_PORT}
       RABBITMQ_VHOST: ${RABBITMQ_VHOST}
       RABBITMQ_USER: ${RABBITMQ_USER}
@@ -553,8 +547,6 @@ services:
       - ./inputs/f7_promotions:/opt/inputs/f7_promotions:ro
     depends_on:
       postgres: {condition: service_healthy}
-      kafka: {condition: service_healthy}
-      rabbitmq: {condition: service_healthy}
     restart: unless-stopped
 
   notification-worker:
@@ -562,7 +554,7 @@ services:
     container_name: platform-notification-worker
     env_file: [.env]
     environment:
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
@@ -574,8 +566,6 @@ services:
       SMTP_PASSWORD: "${SMTP_PASSWORD}"
       SMTP_USE_TLS: "${SMTP_USE_TLS:-true}"
       EMAIL_FROM: "${EMAIL_FROM:-atencion@mercaandes.com}"
-    depends_on:
-      rabbitmq: {condition: service_healthy}
     restart: unless-stopped
 
   operational-alerts-worker:
@@ -583,7 +573,7 @@ services:
     container_name: platform-operational-alerts-worker
     env_file: [.env]
     environment:
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
@@ -591,8 +581,6 @@ services:
       ALERT_LOG_PATH: /app/alerts/processed.jsonl
     volumes:
       - alerts-data:/app/alerts
-    depends_on:
-      rabbitmq: {condition: service_healthy}
     restart: unless-stopped
 
   reports-api:
@@ -600,15 +588,13 @@ services:
     container_name: platform-reports-api
     env_file: [.env]
     environment:
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       RABBITMQ_VHOST: "${RABBITMQ_VHOST:-/}"
     ports: ["${REPORTS_API_PORT:-8005}:8000"]
     command: ["uvicorn", "operational_messaging.api:app", "--host", "0.0.0.0", "--port", "8000"]
-    depends_on:
-      rabbitmq: {condition: service_healthy}
     restart: unless-stopped
 
   reports-worker:
@@ -616,7 +602,7 @@ services:
     container_name: platform-reports-worker
     env_file: [.env]
     environment:
-      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_HOST: ${RABBITMQ_HOST:-10.0.11.155}
       RABBITMQ_PORT: "${RABBITMQ_PORT:-5672}"
       RABBITMQ_USER: "${RABBITMQ_USER}"
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
@@ -631,7 +617,6 @@ services:
       - reports-data:/app/reports
     command: ["python", "-m", "operational_messaging.reports"]
     depends_on:
-      rabbitmq: {condition: service_healthy}
       postgres: {condition: service_healthy}
     restart: unless-stopped
 
