@@ -139,7 +139,7 @@ def silver_to_gold_business_rules():
         five_days_later = today + timedelta(days=5)
         cur.execute(
             """
-            SELECT COUNT(*) FROM public.dim_holiday
+            SELECT COUNT(*) FROM public.holidays
             WHERE country_code IN ('CO', 'PE', 'EC', 'BO', 'CL')
             AND holiday_date BETWEEN %s AND %s
             """,
