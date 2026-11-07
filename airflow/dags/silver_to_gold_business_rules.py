@@ -126,10 +126,11 @@ def silver_to_gold_business_rules():
             );
             ALTER TABLE z2_gold.stockout_risk ADD COLUMN IF NOT EXISTS sales_at_risk_usd NUMERIC(14, 2) DEFAULT 0.00;
 
-            -- Initialize available_inventory from public.hot_inventory_risk or mock baseline
+            -- Initialize available_inventory from public.hot_inventory_risk mapped via dim_product
             INSERT INTO z2_gold.available_inventory (store_id, product_id, available_stock)
-            SELECT branch_id::text, product_id::text, available_stock
-            FROM public.hot_inventory_risk
+            SELECT h.store_id, p.product_id::text, COALESCE(h.approx_available, 50)
+            FROM public.hot_inventory_risk h
+            JOIN public.dim_product p ON h.sku = p.sku
             ON CONFLICT (store_id, product_id) DO UPDATE SET available_stock = EXCLUDED.available_stock;
             """
         )
