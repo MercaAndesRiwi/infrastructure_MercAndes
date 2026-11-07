@@ -89,7 +89,11 @@ def f7_promotions_weekly():
         """
         import boto3
 
-        execution_date = context["ds"]
+        execution_date = (
+            context.get("ds")
+            or (context.get("logical_date") and context["logical_date"].strftime("%Y-%m-%d"))
+            or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        )
         s3 = boto3.client("s3")
         base = Path(F7_LOCAL_INPUT_PATH)
 
@@ -125,7 +129,9 @@ def f7_promotions_weekly():
                 print(f"[F7 S3 Warning] S3 unreachable ({exc}). Using local path reference.")
                 s3_key = f"{BRONZE_FOLDER}/{F7_PROMOTIONS_FOLDER}/{execution_date}/F7_promotions.xlsx"
 
-        context["ti"].xcom_push(key="f7_s3_key", value=s3_key)
+        ti = context.get("ti")
+        if ti:
+            ti.xcom_push(key="f7_s3_key", value=s3_key)
         return s3_key
 
     @task(task_id="rn_05_validate_promotion_coverage")
@@ -140,7 +146,17 @@ def f7_promotions_weekly():
         import pandas as pd
         from airflow.providers.postgres.hooks.postgres import PostgresHook
 
-        s3_key = context["ti"].xcom_pull(task_ids="promotions_ingestion_and_validation.upload_f7_to_s3", key="f7_s3_key")
+        ti = context.get("ti")
+        s3_key = ti.xcom_pull(task_ids="promotions_ingestion_and_validation.upload_f7_to_s3", key="f7_s3_key") if ti else None
+        if not s3_key and ti:
+            s3_key = ti.xcom_pull(task_ids="promotions_ingestion_and_validation.upload_f7_to_s3")
+        if not s3_key:
+            execution_date = (
+                context.get("ds")
+                or (context.get("logical_date") and context["logical_date"].strftime("%Y-%m-%d"))
+                or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            )
+            s3_key = f"{BRONZE_FOLDER}/{F7_PROMOTIONS_FOLDER}/{execution_date}/{F7_FILENAME_XLSX}"
 
         contents = None
         try:

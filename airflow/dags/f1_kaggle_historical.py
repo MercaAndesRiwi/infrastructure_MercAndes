@@ -77,7 +77,11 @@ def f1_kaggle_historical_load():
         - If running on ECS Fargate worker, verifies files already in S3 Bronze landing.
         """
         s3 = boto3.client("s3")
-        execution_date = context["ds"]
+        execution_date = (
+            context.get("ds")
+            or (context.get("logical_date") and context["logical_date"].strftime("%Y-%m-%d"))
+            or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        )
         local_path = os.path.join(F1_KAGGLE_LOCAL_INPUT_PATH)
 
         uploaded_files = []

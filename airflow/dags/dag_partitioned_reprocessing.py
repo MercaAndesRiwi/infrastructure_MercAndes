@@ -70,7 +70,7 @@ SILVER_FOLDER = os.getenv("S3_SILVER_FOLDER", "silver")
     max_active_runs=1,
     params={
         "start_date": Param(
-            default="2025-01-01",
+            default="2026-01-01",
             type="string",
             format="date",
             description="Start date for backfill partition window (YYYY-MM-DD)",
@@ -116,7 +116,7 @@ def dag_partitioned_reprocessing():
         """
         Validates date bounds and resolves distinct dates that exist within the scope.
         """
-        params = context["params"]
+        params = context.get("params") or {}
         start_dt_str = params.get("start_date", "2025-01-01")
         end_dt_str = params.get("end_date", "2025-12-31")
         countries = params.get("countries", ["colombia", "peru", "ecuador", "bolivia", "chile"])
