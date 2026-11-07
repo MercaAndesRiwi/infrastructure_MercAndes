@@ -404,21 +404,19 @@ def seller_scoring():
         cur = conn.cursor()
         try:
             cur.execute("""
-                INSERT INTO z1_silver.seller_score_orders (
-                    order_id, seller_id, order_date, promised_delivery_date, 
-                    actual_delivery_date, order_status, on_time_delivery
+                CREATE SCHEMA IF NOT EXISTS z1_silver;
+                INSERT INTO z1_silver.seller_score_dispatch (
+                    dispatch_id, source_system, source_seller_id, paid_at, shipped_at
                 )
                 SELECT 
-                    event_payload->>'order_id',
+                    COALESCE(event_payload->>'order_id', gen_random_uuid()::text),
+                    'Marketplace',
                     COALESCE(event_payload->>'seller_id', 'SEL-CO-001'),
-                    COALESCE((event_payload->>'order_date')::date, CURRENT_DATE),
-                    COALESCE((event_payload->>'promised_delivery_date')::date, CURRENT_DATE + 3),
-                    COALESCE((event_payload->>'actual_delivery_date')::date, CURRENT_DATE + 2),
-                    COALESCE(event_payload->>'status', 'delivered'),
-                    TRUE
+                    COALESCE((event_payload->>'order_date')::timestamptz, NOW() - INTERVAL '1 day'),
+                    COALESCE((event_payload->>'actual_delivery_date')::timestamptz, NOW())
                 FROM public.marketplace_events
                 WHERE event_payload ? 'order_id'
-                ON CONFLICT (order_id) DO NOTHING;
+                ON CONFLICT (dispatch_id) DO NOTHING;
             """)
             count = cur.rowcount
             conn.commit()
@@ -483,29 +481,29 @@ def seller_scoring():
                     ROUND(COALESCE(i.inventory_accuracy, 98.0), 2) AS inventory_accuracy,
                     ROUND(COALESCE(c.cancellation_rate, 2.0), 2) AS cancellation_rate,
                     NOW() AS calculated_at
-                FROM (
-                    SELECT DISTINCT seller_id FROM public.dim_seller
-                    UNION
-                    SELECT DISTINCT seller_id FROM z1_silver.seller_score_orders
-                ) s
+                FROM public.dim_seller s
                 LEFT JOIN (
-                    SELECT seller_id, 100.0 * COUNT(*) FILTER (WHERE on_time_delivery = TRUE) / NULLIF(COUNT(*), 0) AS dispatch_pct
-                    FROM z1_silver.seller_score_orders
-                    GROUP BY seller_id
+                    SELECT source_seller_id AS seller_id, 
+                           100.0 * COUNT(*) FILTER (WHERE dispatch_lead_time_hours <= 48) / NULLIF(COUNT(*), 0) AS dispatch_pct
+                    FROM z1_silver.vw_seller_dispatch
+                    GROUP BY source_seller_id
                 ) o ON s.seller_id = o.seller_id
                 LEFT JOIN (
-                    SELECT seller_id, AVG(review_score) AS review_rating
-                    FROM z1_silver.seller_score_reviews
-                    GROUP BY seller_id
+                    SELECT source_seller_id AS seller_id, AVG(review_score) AS review_rating
+                    FROM z1_silver.vw_seller_reviews
+                    GROUP BY source_seller_id
                 ) r ON s.seller_id = r.seller_id
                 LEFT JOIN (
-                    SELECT seller_id, accuracy_pct AS inventory_accuracy
-                    FROM z2_gold.inventory_accuracy
+                    SELECT source_seller_id AS seller_id, 
+                           100.0 * COUNT(*) FILTER (WHERE inventory_accurate = TRUE) / NULLIF(COUNT(*), 0) AS inventory_accuracy
+                    FROM z1_silver.vw_seller_inventory
+                    GROUP BY source_seller_id
                 ) i ON s.seller_id = i.seller_id
                 LEFT JOIN (
-                    SELECT seller_id, 100.0 * COUNT(*) FILTER (WHERE cancelled = TRUE) / NULLIF(COUNT(*), 0) AS cancellation_rate
-                    FROM z1_silver.seller_score_cancellations
-                    GROUP BY seller_id
+                    SELECT source_seller_id AS seller_id, 
+                           100.0 * COUNT(*) FILTER (WHERE cancelled = TRUE) / NULLIF(COUNT(*), 0) AS cancellation_rate
+                    FROM z1_silver.vw_seller_cancellations
+                    GROUP BY source_seller_id
                 ) c ON s.seller_id = c.seller_id
                 ON CONFLICT (seller_id) DO UPDATE SET
                     score = EXCLUDED.score,
