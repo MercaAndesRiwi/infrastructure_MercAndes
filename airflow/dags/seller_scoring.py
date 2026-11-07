@@ -400,8 +400,8 @@ def seller_scoring():
             "KAFKA_TOPIC_ORDERS": os.getenv(
                 "KAFKA_TOPIC_ORDERS", "mercaandes.orders.events"
             ),
-            "POSTGRES_HOST": "postgres",
-            "POSTGRES_PORT": "5432",
+            "POSTGRES_HOST": os.getenv("POS_DB_HOST", "postgres"),
+            "POSTGRES_PORT": os.getenv("POS_DB_PORT", "5432"),
             "POSTGRES_DB": os.getenv("POS_DB_NAME", "merca_pos"),
             "POSTGRES_USER": os.getenv("POS_DB_USER", "pos_user"),
             "POSTGRES_PASSWORD": os.getenv("POS_DB_PASSWORD", ""),
@@ -421,8 +421,8 @@ def seller_scoring():
         docker_url="unix://var/run/docker.sock",
         network_mode=os.getenv("SELLER_SCORE_DOCKER_NETWORK", "mercaandes-seller-score"),
         environment={
-            "POSTGRES_HOST": "postgres",
-            "POSTGRES_PORT": "5432",
+            "POSTGRES_HOST": os.getenv("POS_DB_HOST", "postgres"),
+            "POSTGRES_PORT": os.getenv("POS_DB_PORT", "5432"),
             "POSTGRES_DB": os.getenv("POS_DB_NAME", "merca_pos"),
             "POSTGRES_USER": os.getenv("POS_DB_USER", "pos_user"),
             "POSTGRES_PASSWORD": os.getenv("POS_DB_PASSWORD", ""),

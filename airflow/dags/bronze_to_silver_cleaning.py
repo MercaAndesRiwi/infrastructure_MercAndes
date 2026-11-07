@@ -210,7 +210,7 @@ def bronze_to_silver_cleaning():
     @task(task_id="rn_10_recalculate_gold_partitions")
     def recalculate_affected_gold_partitions(**context):
         """
-        AC-1, AC-3, AC-5: Incremental recalculation of Gold aggregates for affected partitions.
+        AC-1, AC-3, AC-5 / RF-06: Incremental recalculation of Gold aggregates for affected partitions.
         Touches strictly and only the affected day's partition, preserving all other historical days.
         """
         ti = context["ti"]
@@ -221,7 +221,7 @@ def bronze_to_silver_cleaning():
         affected_partitions = rn10_result.get("affected_partitions", [])
 
         if not affected_partitions:
-            print("[RN-10] No late events requiring historical partition recalculation.")
+            print("[RN-10/RF-06] No late events requiring historical partition recalculation.")
             return 0
 
         pg_hook = PostgresHook(postgres_conn_id="pos_db")
@@ -229,9 +229,24 @@ def bronze_to_silver_cleaning():
         cur = conn.cursor()
 
         recalculated_count = 0
+        countries = ["colombia", "peru", "ecuador", "bolivia", "chile"]
+        existing_schemas = []
+        for country in countries:
+            cur.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_schema = %s AND table_name = 'fact_sale'
+                );
+                """,
+                (country,),
+            )
+            if cur.fetchone()[0]:
+                existing_schemas.append(country)
+
         for partition_date in affected_partitions:
             print(
-                f"[RN-10][RECALCULATE] Starting partition recalculation for: {partition_date}. "
+                f"[RN-10/RF-06][RECALCULATE] Starting partition recalculation for: {partition_date}. "
                 f"Ensuring only this day's partition is updated."
             )
 
@@ -246,26 +261,53 @@ def bronze_to_silver_cleaning():
                 """
             )
 
-            cur.execute(
+            union_parts = []
+            for country in existing_schemas:
+                union_parts.append(
+                    f"""
+                    SELECT 
+                        sale_id::text AS sale_id,
+                        COALESCE(net_amount, (gross_amount - COALESCE(discount_amount, 0.00))) AS net_sales_usd
+                    FROM {country}.fact_sale
+                    WHERE status NOT IN ('CANCELLED', 'RETURNED')
+                      AND sale_datetime::date = '{partition_date}'::date
+                    """
+                )
+
+            union_parts.append(
+                f"""
+                SELECT 
+                    order_id::text AS sale_id,
+                    COALESCE(CAST(payload->>'net_sales_usd' AS NUMERIC), 0.00) AS net_sales_usd
+                FROM public.marketplace_events
+                WHERE event_timestamp::date = '{partition_date}'::date
+                  AND status <> 'exception_exceeded_72h'
+                  AND event_type IN ('order_completed', 'order_delivered')
                 """
+            )
+
+            combined_sql = " UNION ALL ".join(union_parts)
+            cur.execute(
+                f"""
+                WITH partition_sales AS (
+                    {combined_sql}
+                )
                 INSERT INTO public.gold_daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
                 SELECT
                     %s::date AS order_date,
-                    COUNT(DISTINCT me.order_id) AS total_orders,
-                    COALESCE(SUM(CAST(me.payload->>'net_sales_usd' AS NUMERIC)), 0.00) AS total_net_sales_usd,
-                    NOW()
-                FROM marketplace_events me
-                WHERE me.event_timestamp::date = %s::date
-                AND me.status <> 'exception_exceeded_72h'
+                    COUNT(DISTINCT sale_id) AS total_orders,
+                    ROUND(COALESCE(SUM(net_sales_usd), 0.00), 2) AS total_net_sales_usd,
+                    NOW() AS recalculated_at
+                FROM partition_sales
                 ON CONFLICT (order_date) DO UPDATE
                 SET total_orders = EXCLUDED.total_orders,
                     total_net_sales_usd = EXCLUDED.total_net_sales_usd,
                     recalculated_at = NOW();
                 """,
-                (partition_date, partition_date),
+                (partition_date,),
             )
             recalculated_count += 1
-            print(f"[RN-10][RECALCULATE_COMPLETE] Partition {partition_date} updated in Gold.")
+            print(f"[RN-10/RF-06][RECALCULATE_COMPLETE] Partition {partition_date} updated in Gold.")
 
         conn.commit()
         cur.close()
@@ -280,6 +322,8 @@ def bronze_to_silver_cleaning():
         layer without being anonymized.
         Connects to Postgres (RDS): merca_pos (table: customers).
         """
+        import csv
+        import io
         pg_hook = PostgresHook(postgres_conn_id="pos_db")
         conn = pg_hook.get_conn()
         cur = conn.cursor()
@@ -319,13 +363,14 @@ def bronze_to_silver_cleaning():
             import boto3
             s3 = boto3.client("s3")
             s3_key = f"{SILVER_CUSTOMERS_FOLDER}/customers_anonymized.csv"
-            cur.execute("SELECT customer_id, customer_name, customer_document, customer_email FROM customers LIMIT 1000;")
+            cur.execute("SELECT customer_id, customer_name, customer_document, customer_email FROM customers;")
             rows = cur.fetchall()
             if rows:
-                csv_buffer = "customer_id,customer_name_md5,customer_document_md5,customer_email_md5\n" + "\n".join(
-                    f"{r[0]},{r[1]},{r[2]},{r[3]}" for r in rows
-                )
-                s3.put_object(Bucket=BUCKET, Key=s3_key, Body=csv_buffer.encode("utf-8"))
+                output = io.StringIO()
+                writer = csv.writer(output)
+                writer.writerow(["customer_id", "customer_name_md5", "customer_document_md5", "customer_email_md5"])
+                writer.writerows(rows)
+                s3.put_object(Bucket=BUCKET, Key=s3_key, Body=output.getvalue().encode("utf-8"))
                 print(f"[RN-11][S3 SILVER] Exported {len(rows)} anonymized customer records to s3://{BUCKET}/{s3_key}")
         except Exception as exc:
             print(f"[RN-11][S3 SILVER Warning] S3 export skipped ({exc}). Data secured in PostgreSQL.")
@@ -462,9 +507,12 @@ def bronze_to_silver_cleaning():
         @task(task_id="rn_01_02_06_spark_net_sales")
         def run_net_sales_transformations(**context):
             """
-            RN-01, RN-02, RN-06: Spark Net Sales (post-dispatch cancellation handling & 30-day return window).
-            Calculates net sales excluding taxes, converts to USD, and persists aggregates.
+            RN-01, RN-02, RN-06: Net sales calculation, cancellations, and return window.
+            Aggregates net sales from multi-country POS schemas (colombia, peru, ecuador, bolivia, chile)
+            and marketplace events, and persists aggregates into gold_daily_sales.
             """
+            import csv
+            import io
             pg_hook = PostgresHook(postgres_conn_id="pos_db")
             conn = pg_hook.get_conn()
             cur = conn.cursor()
@@ -478,32 +526,110 @@ def bronze_to_silver_cleaning():
                 );
                 """
             )
+
+            # Discover existing country schemas with fact_sale table
+            countries = ["colombia", "peru", "ecuador", "bolivia", "chile"]
+            existing_schemas = []
+            for country in countries:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables 
+                        WHERE table_schema = %s AND table_name = 'fact_sale'
+                    );
+                    """,
+                    (country,),
+                )
+                if cur.fetchone()[0]:
+                    existing_schemas.append(country)
+
+            union_parts = []
+            for country in existing_schemas:
+                union_parts.append(
+                    f"""
+                    SELECT 
+                        sale_datetime::date AS sale_date,
+                        sale_id::text AS sale_id,
+                        COALESCE(net_amount, (gross_amount - COALESCE(discount_amount, 0.00))) AS net_sales_usd
+                    FROM {country}.fact_sale
+                    WHERE status NOT IN ('CANCELLED', 'RETURNED')
+                    """
+                )
+
+            # Also check if marketplace_events exists and has records
             cur.execute(
                 """
-                INSERT INTO public.gold_daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
-                VALUES (CURRENT_DATE, 100, 15420.50, NOW())
-                ON CONFLICT (order_date) DO UPDATE
-                SET recalculated_at = NOW();
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.tables 
+                    WHERE table_schema = 'public' AND table_name = 'marketplace_events'
+                );
                 """
             )
+            if cur.fetchone()[0]:
+                union_parts.append(
+                    """
+                    SELECT 
+                        event_timestamp::date AS sale_date,
+                        order_id::text AS sale_id,
+                        COALESCE(CAST(payload->>'net_sales_usd' AS NUMERIC), 0.00) AS net_sales_usd
+                    FROM public.marketplace_events
+                    WHERE status <> 'exception_exceeded_72h'
+                      AND event_type IN ('order_completed', 'order_delivered')
+                    """
+                )
+
+            if union_parts:
+                combined_sql = " UNION ALL ".join(union_parts)
+                cur.execute(
+                    f"""
+                    WITH all_sales AS (
+                        {combined_sql}
+                    )
+                    INSERT INTO public.gold_daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
+                    SELECT
+                        sale_date AS order_date,
+                        COUNT(DISTINCT sale_id) AS total_orders,
+                        ROUND(COALESCE(SUM(net_sales_usd), 0.00), 2) AS total_net_sales_usd,
+                        NOW() AS recalculated_at
+                    FROM all_sales
+                    WHERE sale_date IS NOT NULL
+                    GROUP BY sale_date
+                    ON CONFLICT (order_date) DO UPDATE
+                    SET total_orders = EXCLUDED.total_orders,
+                        total_net_sales_usd = EXCLUDED.total_net_sales_usd,
+                        recalculated_at = NOW();
+                    """
+                )
+                inserted_count = cur.rowcount
+                print(f"[RN-01/02/06] Consolidated daily sales for {inserted_count} dates from schemas: {existing_schemas}")
+            else:
+                print("[RN-01/02/06] No country schemas or events found to consolidate.")
+
             conn.commit()
-            cur.close()
-            conn.close()
 
             # Export net sales aggregates to S3 Silver layer (silver/sales/)
             try:
                 import boto3
                 s3 = boto3.client("s3")
-                s3_key = f"{SILVER_SALES_FOLDER}/sales_summary.csv"
-                s3.put_object(
-                    Bucket=BUCKET,
-                    Key=s3_key,
-                    Body=b"order_date,total_orders,total_net_sales_usd\n2026-11-05,100,15420.50\n"
-                )
-                print(f"[RN-01][S3 SILVER] Exported sales transformations to s3://{BUCKET}/{s3_key}")
+                cur.execute("SELECT order_date, total_orders, total_net_sales_usd FROM public.gold_daily_sales ORDER BY order_date DESC;")
+                rows = cur.fetchall()
+                if rows:
+                    output = io.StringIO()
+                    writer = csv.writer(output)
+                    writer.writerow(["order_date", "total_orders", "total_net_sales_usd"])
+                    writer.writerows(rows)
+                    s3_key = f"{SILVER_SALES_FOLDER}/sales_summary.csv"
+                    s3.put_object(
+                        Bucket=BUCKET,
+                        Key=s3_key,
+                        Body=output.getvalue().encode("utf-8")
+                    )
+                    print(f"[RN-01][S3 SILVER] Exported {len(rows)} sales transformation records to s3://{BUCKET}/{s3_key}")
             except Exception as exc:
                 print(f"[RN-01][S3 SILVER Warning] S3 export skipped ({exc}).")
 
+            cur.close()
+            conn.close()
             print("[RN-01/02/06] Net sales, cancellations and return policies processed for Silver layer.")
             return True
 
@@ -547,7 +673,9 @@ def bronze_to_silver_cleaning():
 
         @task(task_id="export_pos_and_catalog_to_s3")
         def export_pos_and_catalog_to_s3(**context):
-            """Export POS transactions and product catalog to AWS S3."""
+            """Export POS transactions and product catalog to AWS S3 using clean CSV formatting."""
+            import csv
+            import io
             import boto3
             from airflow.providers.postgres.hooks.postgres import PostgresHook
             try:
@@ -558,34 +686,51 @@ def bronze_to_silver_cleaning():
 
                 for country in ["colombia", "peru", "ecuador", "bolivia", "chile"]:
                     try:
-                        cur.execute(f"SELECT sale_id, branch_id, seller_id, sale_datetime, gross_amount, discount_amount, tax_amount, status FROM {country}.fact_sale LIMIT 1000;")
+                        cur.execute(
+                            f"""
+                            SELECT sale_id, branch_id, seller_id, sale_datetime, gross_amount, discount_amount, tax_amount, status
+                            FROM {country}.fact_sale;
+                            """
+                        )
+                        cols = [desc[0] for desc in cur.description]
                         rows = cur.fetchall()
                         if rows:
-                            csv_data = "sale_id,branch_id,seller_id,sale_datetime,gross_amount,discount_amount,tax_amount,status\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
+                            output = io.StringIO()
+                            writer = csv.writer(output)
+                            writer.writerow(cols)
+                            writer.writerows(rows)
                             key = f"bronze/pos/{country}/fact_sale.csv"
-                            s3.put_object(Bucket=BUCKET, Key=key, Body=csv_data.encode("utf-8"))
+                            s3.put_object(Bucket=BUCKET, Key=key, Body=output.getvalue().encode("utf-8"))
                             print(f"[BRONZE POS] Exported {len(rows)} records to s3://{BUCKET}/{key}")
                     except Exception as exc:
                         print(f"[BRONZE POS Warning] Could not export {country}: {exc}")
 
                 try:
-                    cur.execute("SELECT id, event_id, event_type, order_id, event_timestamp FROM public.marketplace_events LIMIT 1000;")
+                    cur.execute("SELECT id, event_id, event_type, order_id, event_timestamp FROM public.marketplace_events;")
+                    cols = [desc[0] for desc in cur.description]
                     rows = cur.fetchall()
                     if rows:
-                        csv_data = "id,event_id,event_type,order_id,event_timestamp\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
+                        output = io.StringIO()
+                        writer = csv.writer(output)
+                        writer.writerow(cols)
+                        writer.writerows(rows)
                         key = "bronze/apis/marketplace_events.csv"
-                        s3.put_object(Bucket=BUCKET, Key=key, Body=csv_data.encode("utf-8"))
+                        s3.put_object(Bucket=BUCKET, Key=key, Body=output.getvalue().encode("utf-8"))
                         print(f"[BRONZE APIS] Exported {len(rows)} records to s3://{BUCKET}/{key}")
                 except Exception as exc:
                     print(f"[BRONZE APIS Warning] Could not export events: {exc}")
 
                 try:
-                    cur.execute("SELECT product_id, sku, product_name, brand, is_active FROM public.dim_product LIMIT 1000;")
+                    cur.execute("SELECT product_id, sku, product_name, brand, is_active FROM public.dim_product;")
+                    cols = [desc[0] for desc in cur.description]
                     rows = cur.fetchall()
                     if rows:
-                        csv_data = "product_id,sku,product_name,brand,is_active\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
+                        output = io.StringIO()
+                        writer = csv.writer(output)
+                        writer.writerow(cols)
+                        writer.writerows(rows)
                         key = f"{SILVER_PRODUCTS_FOLDER}/products_catalog.csv"
-                        s3.put_object(Bucket=BUCKET, Key=key, Body=csv_data.encode("utf-8"))
+                        s3.put_object(Bucket=BUCKET, Key=key, Body=output.getvalue().encode("utf-8"))
                         print(f"[SILVER PRODUCTS] Exported {len(rows)} records to s3://{BUCKET}/{key}")
                 except Exception as exc:
                     print(f"[SILVER PRODUCTS Warning] Could not export products: {exc}")

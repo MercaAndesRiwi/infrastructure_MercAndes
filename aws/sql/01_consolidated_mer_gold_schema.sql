@@ -185,6 +185,7 @@ CREATE TABLE IF NOT EXISTS public.gold_stockout_risk (
     days_until_stockout NUMERIC(10, 1),
     threshold_days      INTEGER NOT NULL DEFAULT 3,
     at_risk             BOOLEAN NOT NULL DEFAULT FALSE,
+    sales_at_risk_usd   NUMERIC(14, 2) DEFAULT 0.00,
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (store_id, product_id)
