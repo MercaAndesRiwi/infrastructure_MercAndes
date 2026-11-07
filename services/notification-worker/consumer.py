@@ -28,7 +28,7 @@ try:
 except Exception:
     pass
 
-from email_service import format_purchase_email, send_email
+from email_service import format_purchase_email, format_purchase_email_html, send_email
 
 # Strictly read environment variables without fallback defaults
 RABBITMQ_HOST = os.environ.get("RABBITMQ_HOST")
@@ -91,8 +91,23 @@ def process_message(ch, method, properties, body):
             company=company,
         )
 
-        subject = f"Confirmación de tu pedido {order_id} - {company}"
-        send_email(to_email=customer_email, subject=subject, body_text=email_body)
+        email_html = format_purchase_email_html(
+            customer_name=customer_name,
+            order_id=order_id,
+            purchase_date=purchase_date,
+            products=products,
+            total_paid=total_paid,
+            status=status,
+            company=company,
+        )
+
+        subject = f"🛒 Confirmación de tu pedido {order_id} - {company}"
+        send_email(
+            to_email=customer_email,
+            subject=subject,
+            body_text=email_body,
+            html_content=email_html,
+        )
 
         ch.basic_ack(delivery_tag=method.delivery_tag)
         print(f"[WORKER] Notificación procesada y confirmada para pedido {order_id} ({customer_email})")
