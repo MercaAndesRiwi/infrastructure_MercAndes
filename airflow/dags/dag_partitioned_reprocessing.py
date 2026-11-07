@@ -337,7 +337,7 @@ def dag_partitioned_reprocessing():
                 writer = csv.writer(output)
                 writer.writerow(cols)
                 writer.writerows(rows)
-                key = f"{GOLD_FOLDER}/gold_daily_sales_reprocessed.csv"
+                key = f"{GOLD_FOLDER}/reprocessed/gold_daily_sales_reprocessed.csv"
                 s3.put_object(Bucket=BUCKET, Key=key, Body=output.getvalue().encode("utf-8"))
                 print(f"[REPROCESS_S3] Exported {len(rows)} reprocessed daily sales rows to s3://{BUCKET}/{key}")
 
