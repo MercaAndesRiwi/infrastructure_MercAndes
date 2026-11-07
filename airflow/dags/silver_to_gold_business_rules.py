@@ -179,12 +179,12 @@ def silver_to_gold_business_rules():
             FROM z2_gold.available_inventory ai
             LEFT JOIN (
                 SELECT
-                    branch_id::text AS store_id,
-                    product_id::text AS product_id,
+                    store_id,
+                    product_id,
                     ROUND(AVG(quantity), 2) AS avg_daily_sales,
-                    ROUND(COALESCE(AVG(unit_price_usd), 25.00), 2) AS avg_unit_price
+                    ROUND(COALESCE(AVG(unit_price), 25.00), 2) AS avg_unit_price
                 FROM z2_gold.vw_sales_consolidated
-                GROUP BY branch_id, product_id
+                GROUP BY store_id, product_id
             ) s ON s.store_id = ai.store_id AND s.product_id = ai.product_id
             ON CONFLICT (store_id, product_id)
             DO UPDATE SET available_stock = EXCLUDED.available_stock,
