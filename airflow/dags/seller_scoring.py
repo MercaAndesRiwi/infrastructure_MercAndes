@@ -7,15 +7,22 @@ import csv
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from airflow.decorators import dag, task
+try:
+    from airflow.sdk import dag, task
+except ImportError:
+    from airflow.decorators import dag, task
+
 from airflow.sensors.python import PythonSensor
 from airflow.providers.docker.operators.docker import DockerOperator
 from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 try:
-    from airflow.operators.empty import EmptyOperator
+    from airflow.providers.standard.operators.empty import EmptyOperator
 except ImportError:
-    from airflow.operators.dummy import DummyOperator as EmptyOperator  # type: ignore
+    try:
+        from airflow.operators.empty import EmptyOperator
+    except ImportError:
+        from airflow.operators.dummy import DummyOperator as EmptyOperator  # type: ignore
 
 default_args = {
     "owner": "MercaAndes Data Team",
