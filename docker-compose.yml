@@ -240,7 +240,7 @@ services:
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
-      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
+      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}?sslmode=${POS_DB_SSLMODE:-require}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
     volumes:
@@ -281,7 +281,7 @@ services:
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
-      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
+      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}?sslmode=${POS_DB_SSLMODE:-require}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
     volumes:
@@ -342,7 +342,7 @@ services:
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
-      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
+      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}?sslmode=${POS_DB_SSLMODE:-require}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
@@ -387,7 +387,7 @@ services:
       RABBITMQ_PASSWORD: "${RABBITMQ_PASSWORD}"
       F7_WEEKLY_PROMOTIONS_LOCAL_INPUT_PATH: /opt/inputs/f7_promotions
       F1_KAGGLE_LOCAL_INPUT_PATH: /opt/inputs/f1_kaggle
-      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}"
+      AIRFLOW_CONN_POS_DB: "postgresql+psycopg2://${POS_DB_USER:-pos_user}:${POS_DB_PASSWORD}@${POS_DB_HOST:-postgres}:${POS_DB_PORT:-5432}/${POS_DB_NAME:-merca_pos}?sslmode=${POS_DB_SSLMODE:-require}"
       AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
       _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-apache-airflow-providers-apache-spark apache-airflow-providers-postgres apache-airflow-providers-docker pika boto3 pandas openpyxl}
       AIRFLOW__CORE__EXECUTION_API_SERVER_URL: "http://airflow-apiserver:8080/execution/"
