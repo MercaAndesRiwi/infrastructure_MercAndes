@@ -228,11 +228,11 @@ def bronze_to_silver_cleaning():
         AC-1, AC-3, AC-5 / RF-06: Incremental recalculation of Gold aggregates for affected partitions.
         Touches strictly and only the affected day's partition, preserving all other historical days.
         """
-        ti = context["ti"]
+        ti = context.get("ti")
         rn10_result = (
             ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_10_deduplicate_late_events")
-            or {}
-        )
+            if ti else {}
+        ) or {}
         affected_partitions = rn10_result.get("affected_partitions", [])
 
         if not affected_partitions:
@@ -391,18 +391,18 @@ def bronze_to_silver_cleaning():
         comprehensive quality metrics (duplicates, late arrivals, rejections)
         by source and load (run_id) into public.data_quality_metrics and CloudWatch.
         """
-        ti = context["ti"]
+        ti = context.get("ti")
         load_id = context.get("run_id", "manual_run")
         source_system = "marketplace_events"
 
         rn10_result = (
             ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_10_deduplicate_late_events")
-            or {}
-        )
+            if ti else {}
+        ) or {}
         rn11_result = (
             ti.xcom_pull(task_ids="bronze_cleaning_compliance.rn_11_anonymize_personal_data")
-            or 0
-        )
+            if ti else 0
+        ) or 0
 
         duplicates_detected = int(rn10_result.get("duplicates_removed", 0))
         late_arrivals = int(rn10_result.get("late_incorporated", 0))
@@ -472,9 +472,12 @@ def bronze_to_silver_cleaning():
     @task(task_id="publish_duplicate_data_alert")
     def publish_duplicate_data_alert(**context):
         """Publish a data-quality alert when RN-10 removes duplicate events."""
-        task_instance = context["ti"]
-        result = task_instance.xcom_pull(
-            task_ids="bronze_cleaning_compliance.rn_10_deduplicate_late_events"
+        task_instance = context.get("ti")
+        result = (
+            task_instance.xcom_pull(
+                task_ids="bronze_cleaning_compliance.rn_10_deduplicate_late_events"
+            )
+            if task_instance else {}
         ) or {}
         duplicates_removed = int(result.get("duplicates_removed", 0))
         if duplicates_removed == 0:
@@ -487,7 +490,7 @@ def bronze_to_silver_cleaning():
                 "source": "marketplace_events",
                 "issue": "duplicate_events_removed",
                 "records_affected": duplicates_removed,
-                "dag_run_id": context["run_id"],
+                "dag_run_id": context.get("run_id", "manual_run"),
             },
         )
         publish_message(DATA_QUALITY_QUEUE, message)
