@@ -170,9 +170,10 @@ def f7_promotions_weekly():
         conn = pg_hook.get_conn()
         cur = conn.cursor()
 
-        # Ensure required tables exist idempotently
+        # Ensure required Gold tables exist idempotently
         cur.execute(
             """
+            CREATE SCHEMA IF NOT EXISTS z2_gold;
             CREATE TABLE IF NOT EXISTS z2_gold.available_inventory (
                 store_id VARCHAR(64),
                 product_id VARCHAR(64),
@@ -180,25 +181,6 @@ def f7_promotions_weekly():
                 updated_at TIMESTAMPTZ DEFAULT NOW(),
                 PRIMARY KEY (store_id, product_id)
             );
-            CREATE TABLE IF NOT EXISTS public.products (
-                product_id VARCHAR(64) PRIMARY KEY,
-                sku VARCHAR(64)
-            );
-            CREATE TABLE IF NOT EXISTS public.orders (
-                order_id VARCHAR(64) PRIMARY KEY,
-                order_date DATE DEFAULT CURRENT_DATE,
-                status VARCHAR(32) DEFAULT 'delivered'
-            );
-            CREATE TABLE IF NOT EXISTS public.order_items (
-                order_item_id VARCHAR(64) PRIMARY KEY,
-                order_id VARCHAR(64),
-                seller_id VARCHAR(64),
-                store_id VARCHAR(64),
-                product_id VARCHAR(64),
-                quantity NUMERIC(10, 2) DEFAULT 1,
-                cancel_reason VARCHAR(64)
-            );
-            ALTER TABLE public.order_items ADD COLUMN IF NOT EXISTS seller_id VARCHAR(64);
             """
         )
 
@@ -266,30 +248,14 @@ def f7_promotions_weekly():
 
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS public.stores (
-                store_id VARCHAR(64) PRIMARY KEY,
-                store_name VARCHAR(120)
-            );
-            CREATE TABLE IF NOT EXISTS public.sales (
-                sale_id VARCHAR(64) PRIMARY KEY,
-                store_id VARCHAR(64),
-                sale_timestamp TIMESTAMPTZ DEFAULT NOW()
-            );
-            INSERT INTO public.stores (store_id, store_name)
-            SELECT branch_id::text, branch_name FROM dim_branch
-            ON CONFLICT (store_id) DO NOTHING;
-            """
-        )
-
-        cur.execute(
-            """
-            SELECT s.store_id, s.store_name
-            FROM stores s
-            LEFT JOIN sales sl
-              ON s.store_id = sl.store_id
-             AND sl.sale_timestamp >= NOW() - INTERVAL '2 hours'
-             AND EXTRACT(HOUR FROM sl.sale_timestamp) BETWEEN 8 AND 20
-            WHERE sl.store_id IS NULL
+            SELECT b.branch_id::text AS store_id, b.branch_name AS store_name
+            FROM public.dim_branch b
+            WHERE b.is_active = TRUE
+            AND NOT EXISTS (
+                SELECT 1 FROM z2_gold.vw_sales_consolidated s
+                WHERE s.branch_id = b.branch_id
+                AND s.sale_date >= CURRENT_DATE - INTERVAL '1 day'
+            )
             """
         )
         silent_stores = cur.fetchall()

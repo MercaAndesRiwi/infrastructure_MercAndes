@@ -337,29 +337,18 @@ def bronze_to_silver_cleaning():
 
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS public.customers (
+            CREATE SCHEMA IF NOT EXISTS z1_silver;
+            CREATE TABLE IF NOT EXISTS z1_silver.masked_customers (
                 customer_id VARCHAR(64) PRIMARY KEY,
                 customer_name VARCHAR(200),
                 customer_document VARCHAR(64),
                 customer_email VARCHAR(200),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             );
-            INSERT INTO public.customers (customer_id, customer_name, customer_document, customer_email)
-            SELECT customer_id::text, 'Customer ' || SUBSTRING(customer_token, 1, 10), md5(customer_id::text), customer_token || '@mercaandes.com'
-            FROM dim_customer
+            INSERT INTO z1_silver.masked_customers (customer_id, customer_name, customer_document, customer_email)
+            SELECT customer_id::text, md5('Customer ' || SUBSTRING(customer_token, 1, 10)), md5(customer_id::text), md5(customer_token) || '@mercaandes.com'
+            FROM public.dim_customer
             ON CONFLICT (customer_id) DO NOTHING;
-            """
-        )
-
-        cur.execute(
-            """
-            UPDATE customers
-            SET customer_name = md5(customer_name || customer_id),
-                customer_document = md5(customer_document || customer_id),
-                customer_email = md5(customer_email || customer_id),
-                updated_at = NOW()
-            WHERE customer_name IS NOT NULL
-            AND customer_name <> md5(customer_name || customer_id)
             """
         )
         anonymized = cur.rowcount
@@ -370,7 +359,7 @@ def bronze_to_silver_cleaning():
             import boto3
             s3 = boto3.client("s3")
             s3_key = f"{SILVER_CUSTOMERS_FOLDER}/customers_anonymized.csv"
-            cur.execute("SELECT customer_id, customer_name, customer_document, customer_email FROM customers;")
+            cur.execute("SELECT customer_id, customer_name, customer_document, customer_email FROM z1_silver.masked_customers;")
             rows = cur.fetchall()
             if rows:
                 output = io.StringIO()
