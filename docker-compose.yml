@@ -495,8 +495,8 @@ services:
     container_name: platform-inventory-api
     env_file: [.env]
     environment:
-      POS_DB_HOST: postgres
-      POS_DB_PORT: "5432"
+      POS_DB_HOST: "${POS_DB_HOST}"
+      POS_DB_PORT: "${POS_DB_PORT:-5432}"
       POS_DB_NAME: "${POS_DB_NAME}"
       POS_DB_USER: "${POS_DB_USER}"
       POS_DB_PASSWORD: "${POS_DB_PASSWORD}"
@@ -504,9 +504,6 @@ services:
       API_HOST: "0.0.0.0"
       API_PORT: "8000"
     ports: ["${INVENTORY_API_PORT:-8002}:8000"]
-    depends_on:
-      postgres: {condition: service_healthy}
-      gold-seller-score-schema: {condition: service_completed_successfully}
     restart: unless-stopped
 
   marketplace-api:
