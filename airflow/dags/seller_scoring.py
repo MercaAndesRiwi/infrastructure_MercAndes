@@ -44,10 +44,10 @@ def seller_score_inputs_ready(**context):
     checks = (
         "SELECT COUNT(*) FROM public.dim_seller",
         "SELECT COUNT(*) FROM public.dim_seller_source_key",
-        "SELECT COUNT(*) FROM public.silver_seller_score_dispatch WHERE source_system = 'marketplace'",
-        "SELECT COUNT(*) FROM public.silver_seller_score_reviews WHERE source_system = 'olist'",
-        "SELECT COUNT(*) FROM public.silver_seller_score_inventory WHERE source_system = 'inventory_api'",
-        "SELECT COUNT(*) FROM public.silver_seller_score_cancellations WHERE source_system = 'marketplace'",
+        "SELECT COUNT(*) FROM z1_silver.seller_score_dispatch WHERE source_system = 'marketplace'",
+        "SELECT COUNT(*) FROM z1_silver.seller_score_reviews WHERE source_system = 'olist'",
+        "SELECT COUNT(*) FROM z1_silver.seller_score_inventory WHERE source_system = 'inventory_api'",
+        "SELECT COUNT(*) FROM z1_silver.seller_score_cancellations WHERE source_system = 'marketplace'",
     )
     conn = pg_hook.get_conn()
     try:
@@ -58,16 +58,16 @@ def seller_score_inputs_ready(**context):
                     return False
 
             source_tables = (
-                ("silver_seller_score_dispatch", "marketplace"),
-                ("silver_seller_score_reviews", "olist"),
-                ("silver_seller_score_inventory", "inventory_api"),
-                ("silver_seller_score_cancellations", "marketplace"),
+                ("seller_score_dispatch", "marketplace"),
+                ("seller_score_reviews", "olist"),
+                ("seller_score_inventory", "inventory_api"),
+                ("seller_score_cancellations", "marketplace"),
             )
             for table, source_system in source_tables:
                 cur.execute(
                     f"""
                     SELECT 1
-                    FROM public.{table} source
+                    FROM z1_silver.{table} source
                     LEFT JOIN public.dim_seller_source_key key
                       ON key.source_system = source.source_system
                      AND key.source_seller_id = source.source_seller_id
@@ -148,7 +148,7 @@ def seller_scoring():
                 with conn.cursor() as cur:
                     cur.executemany(
                         """
-                        INSERT INTO public.silver_seller_score_reviews
+                        INSERT INTO z1_silver.seller_score_reviews
                             (review_id, source_system, source_seller_id, review_score, reviewed_at)
                         VALUES (%s, %s, %s, %s, %s)
                         ON CONFLICT (review_id) DO UPDATE SET
@@ -206,7 +206,7 @@ def seller_scoring():
                         INSERT INTO public.dim_seller_source_key
                             (source_system, source_seller_id, seller_id)
                         SELECT DISTINCT 'olist', source.source_seller_id, canonical.seller_id
-                        FROM public.silver_seller_score_reviews source
+                        FROM z1_silver.seller_score_reviews source
                         JOIN public.dim_country country ON country.country_code = 'BR'
                         JOIN public.dim_seller canonical
                           ON canonical.country_id = country.country_id
@@ -230,7 +230,7 @@ def seller_scoring():
                         SET seller_id = EXCLUDED.seller_id
                     """)
                     cur.execute("""
-                        INSERT INTO public.silver_seller_score_dispatch
+                        INSERT INTO z1_silver.seller_score_dispatch
                             (dispatch_id, source_system, source_seller_id, paid_at, shipped_at)
                         SELECT 'sim-dispatch-' || source_key.source_seller_id || '-' || sample.n,
                                'marketplace', source_key.source_seller_id,
@@ -244,7 +244,7 @@ def seller_scoring():
                         ON CONFLICT (dispatch_id) DO NOTHING
                     """)
                     cur.execute("""
-                        INSERT INTO public.silver_seller_score_cancellations
+                        INSERT INTO z1_silver.seller_score_cancellations
                             (order_id, source_system, source_seller_id, cancelled, cancellation_reason, cancelled_at)
                         SELECT 'sim-order-' || source_key.source_seller_id || '-' || sample.n,
                                'marketplace', source_key.source_seller_id, sample.n = 1,
@@ -256,7 +256,7 @@ def seller_scoring():
                         ON CONFLICT (order_id) DO NOTHING
                     """)
                     cur.execute("""
-                        INSERT INTO public.silver_seller_score_inventory
+                        INSERT INTO z1_silver.seller_score_inventory
                             (observation_id, source_system, source_seller_id, inventory_accurate, observed_at)
                         SELECT 'sim-stock-' || source.seller_id, 'inventory_api', source.seller_id,
                                mod(abs(hashtext(source.seller_id))::bigint, 10) <> 0, NOW()
@@ -277,10 +277,10 @@ def seller_scoring():
         checks = {
             "sellers": "SELECT COUNT(*) FROM public.dim_seller",
             "seller keys": "SELECT COUNT(*) FROM public.dim_seller_source_key",
-            "dispatch": "SELECT COUNT(*) FROM public.silver_seller_score_dispatch WHERE source_system = 'marketplace'",
-            "reviews": "SELECT COUNT(*) FROM public.silver_seller_score_reviews WHERE source_system = 'olist'",
-            "inventory": "SELECT COUNT(*) FROM public.silver_seller_score_inventory WHERE source_system = 'inventory_api'",
-            "cancellations": "SELECT COUNT(*) FROM public.silver_seller_score_cancellations WHERE source_system = 'marketplace'",
+            "dispatch": "SELECT COUNT(*) FROM z1_silver.seller_score_dispatch WHERE source_system = 'marketplace'",
+            "reviews": "SELECT COUNT(*) FROM z1_silver.seller_score_reviews WHERE source_system = 'olist'",
+            "inventory": "SELECT COUNT(*) FROM z1_silver.seller_score_inventory WHERE source_system = 'inventory_api'",
+            "cancellations": "SELECT COUNT(*) FROM z1_silver.seller_score_cancellations WHERE source_system = 'marketplace'",
         }
         counts = {}
         for name, query in checks.items():
@@ -288,17 +288,17 @@ def seller_scoring():
             counts[name] = cur.fetchone()[0]
 
         mapping_checks = {
-            "dispatch": "silver_seller_score_dispatch",
-            "reviews": "silver_seller_score_reviews",
-            "inventory": "silver_seller_score_inventory",
-            "cancellations": "silver_seller_score_cancellations",
+            "dispatch": "seller_score_dispatch",
+            "reviews": "seller_score_reviews",
+            "inventory": "seller_score_inventory",
+            "cancellations": "seller_score_cancellations",
         }
         unmapped = {}
         for name, table in mapping_checks.items():
             cur.execute(
                 f"""
                 SELECT COUNT(*)
-                FROM public.{table} source
+                FROM z1_silver.{table} source
                 LEFT JOIN public.dim_seller_source_key key
                   ON key.source_system = source.source_system
                  AND key.source_seller_id = source.source_seller_id
@@ -339,7 +339,7 @@ def seller_scoring():
                        ROW_NUMBER() OVER (
                            PARTITION BY seller_id ORDER BY week_start DESC
                        ) AS week_rank
-                FROM public.gold_seller_score_history
+                FROM z2_gold.seller_score_history
                 WHERE week_start >= date_trunc('week', CURRENT_DATE - INTERVAL '7 days')::date
             ),
             recent_scores AS (
@@ -351,7 +351,7 @@ def seller_scoring():
                 WHERE week_rank <= 2
                 GROUP BY seller_id
             )
-            INSERT INTO public.gold_seller_status (seller_id, status, reason, updated_at)
+            INSERT INTO z2_gold.seller_status (seller_id, status, reason, updated_at)
             SELECT seller_id,
                    CASE
                        WHEN weeks_available = 2 AND latest_score < 45 AND previous_score < 45
@@ -551,14 +551,14 @@ def seller_scoring():
             pg_hook = PostgresHook(postgres_conn_id="pos_db")
             conn = pg_hook.get_conn()
             cur = conn.cursor()
-            for table in ["gold_seller_score", "gold_seller_status"]:
+            for table, tbl_name in [("seller_score", "gold_seller_score"), ("seller_status", "gold_seller_status")]:
                 try:
-                    cur.execute(f"SELECT * FROM public.{table} LIMIT 1000;")
+                    cur.execute(f"SELECT * FROM z2_gold.{table} LIMIT 1000;")
                     cols = [desc[0] for desc in cur.description]
                     rows = cur.fetchall()
                     if rows:
                         csv_data = ",".join(cols) + "\n" + "\n".join([",".join(str(val) for val in r) for r in rows])
-                        key = f"gold/{table}.csv"
+                        key = f"gold/{tbl_name}.csv"
                         s3.put_object(Bucket=bucket, Key=key, Body=csv_data.encode("utf-8"))
                         print(f"[GOLD SELLER SCORE] Exported {len(rows)} records to s3://{bucket}/{key}")
                 except Exception as exc:
