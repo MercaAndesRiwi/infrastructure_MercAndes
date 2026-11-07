@@ -409,13 +409,12 @@ def seller_scoring():
                     dispatch_id, source_system, source_seller_id, paid_at, shipped_at
                 )
                 SELECT 
-                    COALESCE(event_payload->>'order_id', gen_random_uuid()::text),
+                    COALESCE(order_id, payload->>'order_id', gen_random_uuid()::text),
                     'Marketplace',
-                    COALESCE(event_payload->>'seller_id', 'SEL-CO-001'),
-                    COALESCE((event_payload->>'order_date')::timestamptz, NOW() - INTERVAL '1 day'),
-                    COALESCE((event_payload->>'actual_delivery_date')::timestamptz, NOW())
+                    COALESCE(payload->>'seller_id', 'SEL-CO-001'),
+                    COALESCE((payload->>'order_date')::timestamptz, created_at - INTERVAL '1 day'),
+                    COALESCE((payload->>'actual_delivery_date')::timestamptz, created_at)
                 FROM public.marketplace_events
-                WHERE event_payload ? 'order_id'
                 ON CONFLICT (dispatch_id) DO NOTHING;
             """)
             count = cur.rowcount
