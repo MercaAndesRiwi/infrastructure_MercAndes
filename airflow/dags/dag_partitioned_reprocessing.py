@@ -183,7 +183,7 @@ def dag_partitioned_reprocessing():
 
         cur.execute(
             """
-            CREATE TABLE IF NOT EXISTS public.gold_daily_sales (
+            CREATE TABLE IF NOT EXISTS z2_gold.daily_sales (
                 order_date DATE PRIMARY KEY,
                 total_orders INTEGER NOT NULL DEFAULT 0,
                 total_net_sales_usd NUMERIC(14, 2) NOT NULL DEFAULT 0.00,
@@ -226,7 +226,7 @@ def dag_partitioned_reprocessing():
                 WITH partition_sales AS (
                     {combined_sql}
                 )
-                INSERT INTO public.gold_daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
+                INSERT INTO z2_gold.daily_sales (order_date, total_orders, total_net_sales_usd, recalculated_at)
                 SELECT
                     %s::date AS order_date,
                     COUNT(DISTINCT sale_id) AS total_orders,
@@ -320,7 +320,7 @@ def dag_partitioned_reprocessing():
             conn = pg_hook.get_conn()
             cur = conn.cursor()
 
-            cur.execute("SELECT order_date, total_orders, total_net_sales_usd, recalculated_at FROM public.gold_daily_sales ORDER BY order_date ASC;")
+            cur.execute("SELECT order_date, total_orders, total_net_sales_usd, recalculated_at FROM z2_gold.daily_sales ORDER BY order_date ASC;")
             cols = [desc[0] for desc in cur.description]
             rows = cur.fetchall()
 
